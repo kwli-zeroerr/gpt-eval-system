@@ -33,7 +33,7 @@ class RetrievalConfig:
 
 class RagFlowClient:
     """RagFlow API客户端 - 适配版本"""
-    
+
     def __init__(self, api_url: str, api_key: str):
         self.api_url = api_url.rstrip('/')
         self.api_key = api_key
@@ -75,7 +75,7 @@ class RagFlowClient:
         """
         if not theme:
             return []
-        
+
         local = self._load_local_datasets(datasets_json_path)
         if isinstance(local, dict) and theme in local and isinstance(local[theme], dict):
             ds_obj = local[theme]

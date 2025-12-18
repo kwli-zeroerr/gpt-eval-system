@@ -162,7 +162,7 @@ function FormatConvert() {
               i++; // Skip next quote
             } else {
               // Toggle quote state
-              inQuotes = !inQuotes;
+            inQuotes = !inQuotes;
             }
           } else if (char === ',' && !inQuotes) {
             // Field separator
@@ -318,15 +318,15 @@ function FormatConvert() {
           )}
           
           <div className="csv-table-container">
-            <table className="csv-table">
-              <thead>
-                <tr>
+          <table className="csv-table">
+            <thead>
+              <tr>
                   {csvFullData[0]?.map((header, idx) => (
-                    <th key={idx}>{header}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+                  <th key={idx}>{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
                 {csvFullData
                   .slice(1)
                   .slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage)
@@ -356,10 +356,10 @@ function FormatConvert() {
                           </td>
                         );
                       })}
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           </div>
           
           {/* Bottom Pagination */}

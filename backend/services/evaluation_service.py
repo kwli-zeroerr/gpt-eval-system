@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 import json
 import re
+from config.paths import DATA_EVALUATION_DIR
 
 from services.ragflow_client import RagFlowClient, RetrievalConfig
 from services.chapter_matcher import ChapterMatcher
@@ -145,7 +146,7 @@ async def run_evaluation(
     
     # 设置输出目录 - 保存到 data/evaluation/ 目录
     if output_dir is None:
-        evaluation_dir = Path("data/evaluation")
+        evaluation_dir = DATA_EVALUATION_DIR
         evaluation_dir.mkdir(parents=True, exist_ok=True)
         csv_path_obj = Path(csv_path)
         output_dir = evaluation_dir / f"{csv_path_obj.stem}_evaluation_results"

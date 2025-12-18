@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
 from schemas import QuestionItem
+from config.paths import DATA_FRONTEND_DIR, DATA_BACKEND_DIR
 
 
 def save_questions_to_log(
@@ -21,8 +22,8 @@ def save_questions_to_log(
     Returns the path to the JSON log file.
     """
     # Create data directories if they don't exist
-    frontend_dir = Path("data/frontend")
-    backend_dir = Path("data/backend")
+    frontend_dir = DATA_FRONTEND_DIR
+    backend_dir = DATA_BACKEND_DIR
     frontend_dir.mkdir(parents=True, exist_ok=True)
     backend_dir.mkdir(parents=True, exist_ok=True)
     

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 import os
+from config.paths import DATA_FRONTEND_DIR, DATA_EXPORT_DIR
 
 
 # Category type mapping
@@ -93,7 +94,7 @@ def convert_log_to_csv(log_file_path: str, output_path: Optional[str] = None) ->
     # Generate output path - save to data/export/ directory
     if output_path is None:
         # Create data/export directory if it doesn't exist
-        export_dir = Path("data/export")
+        export_dir = DATA_EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
         output_path = export_dir / f"{log_path.stem}.csv"
     else:
@@ -136,7 +137,7 @@ def get_csv_path_for_log(log_file_path: str) -> str:
         Expected CSV file path
     """
     log_path = Path(log_file_path)
-    export_dir = Path("data/export")
+    export_dir = DATA_EXPORT_DIR
     export_dir.mkdir(parents=True, exist_ok=True)
     return str(export_dir / f"{log_path.stem}.csv")
 
@@ -154,13 +155,13 @@ def csv_exists_for_log(log_file_path: str) -> bool:
     return Path(csv_path).exists()
 
 
-def list_log_files(log_dir: str = "data/frontend") -> List[Dict[str, str]]:
+def list_log_files(log_dir: str = None) -> List[Dict[str, str]]:
     """List all available log files from data/frontend/ directory.
     
     Returns:
         List of dicts with file info: {path, request_id, generated_at, total_questions}
     """
-    log_path = Path(log_dir)
+    log_path = Path(log_dir) if log_dir is not None else DATA_FRONTEND_DIR
     if not log_path.exists():
         return []
     
@@ -246,13 +247,13 @@ def delete_log_files(log_file_path: str) -> Dict[str, bool]:
     return result
 
 
-def list_csv_files(data_dir: str = "data/export") -> List[Dict[str, str]]:
+def list_csv_files(data_dir: str = None) -> List[Dict[str, str]]:
     """List all available CSV files in data/export/ directory.
     
     Returns:
         List of dicts with file info: {path, filename, size, modified_at}
     """
-    data_path = Path(data_dir)
+    data_path = Path(data_dir) if data_dir is not None else DATA_EXPORT_DIR
     if not data_path.exists():
         return []
     

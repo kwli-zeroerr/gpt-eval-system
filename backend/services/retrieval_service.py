@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import time
+from config.paths import DATA_RETRIEVAL_DIR
 
 from services.ragflow_client import RagFlowClient, RetrievalConfig
 from services.chapter_matcher import ChapterMatcher
@@ -175,7 +176,7 @@ async def run_retrieval(
     
     # 生成输出 CSV 路径 - 保存到 data/retrieval/ 目录
     csv_path_obj = Path(csv_path)
-    retrieval_dir = Path("data/retrieval")
+    retrieval_dir = DATA_RETRIEVAL_DIR
     retrieval_dir.mkdir(parents=True, exist_ok=True)
     output_csv_path = retrieval_dir / f"{csv_path_obj.stem}_with_answers.csv"
     

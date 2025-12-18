@@ -14,8 +14,8 @@ interface ModuleInfo {
 }
 
 const MODULES: ModuleInfo[] = [
-  { id: "question-gen", name: "问题生成", status: "completed", component: QuestionGen },
-  { id: "format-convert", name: "格式转换", status: "completed", component: FormatConvert },
+  { id: "question_gen", name: "问题生成", status: "completed", component: QuestionGen },
+  { id: "format_convert", name: "格式转换", status: "completed", component: FormatConvert },
   { id: "retrieval", name: "检索", status: "pending", component: Retrieval },
   { id: "evaluation", name: "评测", status: "pending", component: Evaluation },
 ];
@@ -152,20 +152,14 @@ function Index() {
           }
         } else {
           // For other modules, update status normally
-          setPipelineProgress((prev) => ({
-            ...prev,
-            [module]: status,
-          }));
+        setPipelineProgress((prev) => ({
+          ...prev,
+          [module]: status,
+        }));
         }
         
         // Update current step based on module
-        const moduleIndex = MODULES.findIndex((m) => {
-          if (module === "question_gen") return m.id === "question-gen";
-          if (module === "format_convert") return m.id === "format-convert";
-          if (module === "retrieval") return m.id === "retrieval";
-          if (module === "evaluation") return m.id === "evaluation";
-          return false;
-        });
+        const moduleIndex = MODULES.findIndex((m) => m.id === module);
         
         if (moduleIndex >= 0) {
           if (status === "start") {
@@ -300,7 +294,7 @@ function Index() {
           {/* Quick Actions Card */}
           <div className="quick-actions">
             <div className="section-header">
-              <h3>快速操作</h3>
+            <h3>快速操作</h3>
               <p className="section-subtitle">配置并运行完整的评测流程</p>
             </div>
             <div className="pipeline-controls">
@@ -343,9 +337,9 @@ function Index() {
                 <div className="progress-title">运行进度</div>
                 <div className="progress-modules">
                   {MODULES.map((module, idx) => {
-                    const moduleKey = module.id.replace("-", "_");
+                    const moduleKey = module.id;
                     const status = pipelineProgress[moduleKey] || "pending";
-                    const isQuestionGen = module.id === "question-gen";
+                    const isQuestionGen = module.id === "question_gen";
                     // Show category progress when question-gen is active or has progress data
                     // Keep showing until all 6 categories are completed or module moves to next step
                     const hasProgressData = questionGenProgress && (questionGenProgress.completedCategories.length > 0 || questionGenProgress.currentCategory);
@@ -458,8 +452,8 @@ function Index() {
                   <div className="metric-value">
                     {latestSummary.summary.correct_count || 0}
                   </div>
-                </div>
-              </div>
+            </div>
+            </div>
             </div>
           )}
         </div>

@@ -103,8 +103,8 @@ async def run_full_pipeline(
         
         if not ragflow_api_url or not ragflow_api_key:
             logger.warning("RagFlow API 配置未设置，跳过检索模块")
-            results["retrieval"] = {
-                "status": "skipped",
+        results["retrieval"] = {
+            "status": "skipped",
                 "message": "RagFlow API 配置未设置",
             }
             if progress_callback:
@@ -138,8 +138,8 @@ async def run_full_pipeline(
             )
             
             results["retrieval"] = retrieval_result
-            
-            if progress_callback:
+        
+        if progress_callback:
                 await progress_callback("retrieval", "complete", retrieval_result)
             
             # 使用检索后的 CSV 进行评测
@@ -171,13 +171,13 @@ async def run_full_pipeline(
             if progress_callback:
                 await progress_callback("evaluation", "complete", evaluation_result)
         else:
-            results["evaluation"] = {
-                "status": "skipped",
+        results["evaluation"] = {
+            "status": "skipped",
                 "message": "检索模块未完成，跳过评测",
-            }
-            
-            if progress_callback:
-                await progress_callback("evaluation", "skipped", results["evaluation"])
+        }
+        
+        if progress_callback:
+            await progress_callback("evaluation", "skipped", results["evaluation"])
         
         return results
         
