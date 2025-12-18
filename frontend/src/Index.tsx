@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import figlet from "figlet";
 import QuestionGen from "./modules/QuestionGen";
 import FormatConvert from "./modules/FormatConvert";
 import Retrieval from "./modules/Retrieval";
@@ -23,30 +22,23 @@ const MODULES: ModuleInfo[] = [
 
 function Index() {
   const [activeModule, setActiveModule] = useState<string>("overview");
-  const [currentStep, setCurrentStep] = useState<number>(0); // 0 = question-gen, 1 = format-convert, etc.
+  const [pipelineStep, setPipelineStep] = useState<number>(0); // Pipeline progress (only updated by pipeline)
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [pipelineProgress, setPipelineProgress] = useState<Record<string, string>>({});
   const [pipelineResults, setPipelineResults] = useState<any>(null);
+  const [latestSummary, setLatestSummary] = useState<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const [figletText, setFigletText] = useState<string>("");
+  const [perCategoryQuestions, setPerCategoryQuestions] = useState<number>(5); // 每类问题数量
+  const [questionGenProgress, setQuestionGenProgress] = useState<{
+    currentCategory: string;
+    completedCategories: string[];
+    totalCategories: number;
+  } | null>(null);
 
   const activeModuleInfo = MODULES.find((m) => m.id === activeModule);
 
   // Show overview page when no specific module is selected, or show module details
   const showOverview = activeModule === "overview";
-
-  // Generate figlet text on mount
-  useEffect(() => {
-    figlet("Now You See it", (err, data) => {
-      if (err) {
-        console.error("Figlet error:", err);
-        return;
-      }
-      if (data) {
-        setFigletText(data);
-      }
-    });
-  }, []);
 
   // Cleanup WebSocket on unmount
   useEffect(() => {
@@ -55,6 +47,23 @@ function Index() {
         wsRef.current.close();
       }
     };
+  }, []);
+
+  // Fetch latest evaluation summary for dashboard
+  useEffect(() => {
+    const fetchSummary = async () => {
+      try {
+        const response = await fetch("/api/evaluation/latest-summary");
+        const data = await response.json();
+        setLatestSummary(data);
+      } catch (e) {
+        console.error("Failed to fetch summary:", e);
+      }
+    };
+    fetchSummary();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchSummary, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleRunPipeline = () => {
@@ -70,13 +79,19 @@ function Index() {
     wsRef.current = ws;
     
     ws.onopen = () => {
-      // Send pipeline request with default settings
+      // Send pipeline request with user-selected settings
       ws.send(JSON.stringify({
         categories: ["S1", "S2", "S3", "S4", "S5", "S6"],
-        per_category: 5,
+        per_category: perCategoryQuestions,
         prompt_overrides: {},
         source_files: [],
       }));
+      // Initialize question generation progress
+      setQuestionGenProgress({
+        currentCategory: "",
+        completedCategories: [],
+        totalCategories: 6,
+      });
     };
     
     ws.onmessage = (event) => {
@@ -84,10 +99,64 @@ function Index() {
       
       if (data.type === "module_progress") {
         const { module, status, data: moduleData } = data;
-        setPipelineProgress((prev) => ({
-          ...prev,
-          [module]: status,
-        }));
+        
+        // Handle question generation category progress first
+        if (module === "question_gen" && moduleData) {
+          if (moduleData.category) {
+            // Category is being processed
+            setQuestionGenProgress((prev) => {
+              if (!prev) {
+                // Initialize if not exists
+                return {
+                  currentCategory: moduleData.category,
+                  completedCategories: [],
+                  totalCategories: 6,
+                };
+              }
+              return {
+                ...prev,
+                currentCategory: moduleData.category,
+              };
+            });
+            // Update status to "progress" to show it's actively running
+            setPipelineProgress((prev) => ({
+              ...prev,
+              [module]: "progress",
+            }));
+          }
+          if (moduleData.category_complete) {
+            // Category completed
+            setQuestionGenProgress((prev) => {
+              if (!prev) {
+                return {
+                  currentCategory: "",
+                  completedCategories: [moduleData.category_complete],
+                  totalCategories: 6,
+                };
+              }
+              const completed = [...prev.completedCategories];
+              if (!completed.includes(moduleData.category_complete)) {
+                completed.push(moduleData.category_complete);
+              }
+              return {
+                ...prev,
+                completedCategories: completed,
+                currentCategory: "",
+              };
+            });
+            // Keep status as "progress" while categories are still being generated
+            setPipelineProgress((prev) => ({
+              ...prev,
+              [module]: "progress",
+            }));
+          }
+        } else {
+          // For other modules, update status normally
+          setPipelineProgress((prev) => ({
+            ...prev,
+            [module]: status,
+          }));
+        }
         
         // Update current step based on module
         const moduleIndex = MODULES.findIndex((m) => {
@@ -100,9 +169,9 @@ function Index() {
         
         if (moduleIndex >= 0) {
           if (status === "start") {
-            setCurrentStep(moduleIndex);
+            setPipelineStep(moduleIndex);
           } else if (status === "complete") {
-            setCurrentStep(moduleIndex + 1);
+            setPipelineStep(moduleIndex + 1);
           }
         }
       } else if (data.type === "complete") {
@@ -135,13 +204,6 @@ function Index() {
 
   return (
     <div className="index-page">
-      {/* Figlet Banner */}
-      {figletText && (
-        <div className="figlet-banner">
-          <pre className="figlet-text">{figletText}</pre>
-        </div>
-      )}
-      
       {/* Header with module tabs */}
       <header className="module-header">
         <div className="module-tabs">
@@ -154,10 +216,9 @@ function Index() {
           {MODULES.map((module, idx) => (
             <button
               key={module.id}
-              className={`module-tab ${activeModule === module.id ? "active" : ""} ${module.status}`}
+              className={`module-tab ${activeModule === module.id ? "active" : ""}`}
               onClick={() => {
                 setActiveModule(module.id);
-                setCurrentStep(idx);
               }}
             >
               <span className="module-number">{idx + 1}</span>
@@ -171,6 +232,7 @@ function Index() {
       {showOverview ? (
         /* Overview Page - Status and Quick Actions */
         <div className="overview-page">
+          {/* Pipeline Status Card */}
           <div className="overview-status" id="overview-status">
             {/* Circular Progress Indicator (Example 8 style) */}
             <div className="circular-progress-section">
@@ -195,21 +257,21 @@ function Index() {
                     strokeWidth="8"
                     strokeLinecap="round"
                     strokeDasharray={`${2 * Math.PI * 45}`}
-                    strokeDashoffset={`${2 * Math.PI * 45 * (1 - (currentStep + 1) / MODULES.length)}`}
+                    strokeDashoffset={`${2 * Math.PI * 45 * (1 - (pipelineStep + 1) / MODULES.length)}`}
                     transform="rotate(-90 50 50)"
                   />
                 </svg>
                 <div className="circular-progress-text">
-                  <div className="progress-ratio">{currentStep + 1} of {MODULES.length}</div>
+                  <div className="progress-ratio">{pipelineStep + 1} of {MODULES.length}</div>
                 </div>
               </div>
               <div className="circular-progress-info">
                 <div className="current-step-name">
-                  {currentStep < MODULES.length ? MODULES[currentStep]?.name : "全部完成"}
+                  {pipelineStep < MODULES.length ? MODULES[pipelineStep]?.name : "全部完成"}
                 </div>
                 <div className="current-step-desc">
-                  {currentStep < MODULES.length 
-                    ? "正在处理中..." 
+                  {pipelineStep < MODULES.length 
+                    ? (pipelineRunning ? "正在处理中..." : "等待运行")
                     : "所有模块已完成"}
                 </div>
               </div>
@@ -221,17 +283,13 @@ function Index() {
                 {MODULES.map((module, idx) => (
                   <div
                     key={module.id}
-                    className={`progress-segment ${idx <= currentStep ? "completed" : ""} ${idx === currentStep ? "active" : ""}`}
-                    onClick={() => {
-                      setActiveModule(module.id);
-                      setCurrentStep(idx);
-                    }}
+                    className={`progress-segment ${idx <= pipelineStep ? "completed" : ""} ${idx === pipelineStep ? "active" : ""}`}
                   >
                     <div className="segment-content">
                       {module.name}
                     </div>
                     {idx < MODULES.length - 1 && (
-                      <div className={`segment-arrow ${idx < currentStep ? "completed" : ""}`}></div>
+                      <div className={`segment-arrow ${idx < pipelineStep ? "completed" : ""}`}></div>
                     )}
                   </div>
                 ))}
@@ -239,9 +297,34 @@ function Index() {
             </div>
           </div>
 
+          {/* Quick Actions Card */}
           <div className="quick-actions">
-            <h3>快速操作</h3>
-            <div className="action-buttons">
+            <div className="section-header">
+              <h3>快速操作</h3>
+              <p className="section-subtitle">配置并运行完整的评测流程</p>
+            </div>
+            <div className="pipeline-controls">
+              <div className="pipeline-config-inline">
+                <label htmlFor="per-category-questions" className="config-label">
+                  <span className="config-label-text">每类问题数量</span>
+                  <div className="config-input-wrapper">
+                    <input
+                      id="per-category-questions"
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={perCategoryQuestions}
+                      onChange={(e) => setPerCategoryQuestions(Number(e.target.value))}
+                      disabled={pipelineRunning}
+                      className="config-input-inline"
+                    />
+                    <span className="config-unit">个/类</span>
+                  </div>
+                </label>
+                <div className="config-summary">
+                  共 <strong>{perCategoryQuestions * 6}</strong> 个问题
+                </div>
+              </div>
               <button
                 className={`action-btn primary ${pipelineRunning ? "running" : ""}`}
                 onClick={handleRunPipeline}
@@ -252,31 +335,9 @@ function Index() {
                   {pipelineRunning ? "运行中..." : "一键运行全部流程"}
                 </span>
               </button>
-              <button
-                className="action-btn"
-                onClick={() => {
-                  setActiveModule("question-gen");
-                  setCurrentStep(0);
-                }}
-                disabled={pipelineRunning}
-              >
-                <span className="action-icon">📝</span>
-                <span className="action-text">仅生成问题</span>
-              </button>
-              <button
-                className="action-btn"
-                onClick={() => {
-                  setActiveModule("format-convert");
-                  setCurrentStep(1);
-                }}
-                disabled={pipelineRunning}
-              >
-                <span className="action-icon">📄</span>
-                <span className="action-text">仅转换格式</span>
-              </button>
             </div>
             
-            {/* Pipeline Progress */}
+            {/* Pipeline Progress - Combined with Question Generation Progress */}
             {pipelineRunning && (
               <div className="pipeline-progress">
                 <div className="progress-title">运行进度</div>
@@ -284,6 +345,12 @@ function Index() {
                   {MODULES.map((module, idx) => {
                     const moduleKey = module.id.replace("-", "_");
                     const status = pipelineProgress[moduleKey] || "pending";
+                    const isQuestionGen = module.id === "question-gen";
+                    // Show category progress when question-gen is active or has progress data
+                    // Keep showing until all 6 categories are completed or module moves to next step
+                    const hasProgressData = questionGenProgress && (questionGenProgress.completedCategories.length > 0 || questionGenProgress.currentCategory);
+                    const showCategoryProgress = isQuestionGen && hasProgressData && (status === "start" || status === "progress" || status === "complete");
+                    
                     return (
                       <div key={module.id} className={`progress-module ${status}`}>
                         <span className="module-indicator">
@@ -293,6 +360,31 @@ function Index() {
                         <span className="module-status">
                           {status === "complete" ? "完成" : status === "start" ? "进行中" : "等待中"}
                         </span>
+                        
+                        {/* S1-S6 Category Progress - Integrated into question-gen module */}
+                        {showCategoryProgress && (
+                          <div className="qg-categories-bar-inline">
+                            {["S1", "S2", "S3", "S4", "S5", "S6"].map((cat) => {
+                              const isCompleted = questionGenProgress.completedCategories.includes(cat);
+                              const isCurrent = questionGenProgress.currentCategory === cat;
+                              return (
+                                <div
+                                  key={cat}
+                                  className={`qg-category-item-inline ${isCompleted ? "completed" : ""} ${isCurrent ? "active" : ""}`}
+                                  title={isCompleted ? `${cat} 已完成` : isCurrent ? `正在生成 ${cat}` : `${cat} 等待中`}
+                                >
+                                  {isCompleted ? "✓" : isCurrent ? "⟳" : cat}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        {showCategoryProgress && questionGenProgress.currentCategory && (
+                          <div className="qg-current-status-inline">
+                            正在生成 {questionGenProgress.currentCategory} 类别问题...
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -335,25 +427,56 @@ function Index() {
             )}
           </div>
 
-          <div className="overview-stats">
-            <div className="stat-card">
-              <div className="stat-value">{MODULES.filter(m => m.status === "completed").length}</div>
-              <div className="stat-label">已完成模块</div>
+          {/* Dashboard with Core Metrics */}
+          {latestSummary && latestSummary.summary && (
+            <div className="dashboard-section">
+              <div className="section-header">
+                <h3>核心指标</h3>
+                <p className="section-subtitle">最新评测结果概览</p>
+              </div>
+              <div className="dashboard-metrics">
+                <div className="metric-card">
+                  <div className="metric-label">准确率</div>
+                  <div className="metric-value">
+                    {latestSummary.summary.accuracy_percentage?.toFixed(2) || "0.00"}%
+                  </div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-label">召回率</div>
+                  <div className="metric-value">
+                    {latestSummary.summary.recall_percentage?.toFixed(2) || "0.00"}%
+                  </div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-label">总问题数</div>
+                  <div className="metric-value">
+                    {latestSummary.summary.total_questions || 0}
+                  </div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-label">正确数</div>
+                  <div className="metric-value">
+                    {latestSummary.summary.correct_count || 0}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="stat-card">
-              <div className="stat-value">{MODULES.filter(m => m.status === "pending").length}</div>
-              <div className="stat-label">待开发模块</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{currentStep + 1}</div>
-              <div className="stat-label">当前进度</div>
-            </div>
-          </div>
+          )}
         </div>
       ) : (
         /* Module Detail Page */
         <div className="module-content">
-          {activeModuleInfo && <activeModuleInfo.component />}
+          {MODULES.map((module) => {
+            const ModuleComponent = module.component;
+            return (
+              <div
+                key={module.id}
+                style={{ display: activeModule === module.id ? "block" : "none" }}
+              >
+                <ModuleComponent />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

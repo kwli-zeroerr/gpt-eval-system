@@ -7,4 +7,6 @@ minio
 tqdm
 websockets
 pyfiglet
+pandas
+requests
 

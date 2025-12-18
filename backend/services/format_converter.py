@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
+import os
 
 
 # Category type mapping
@@ -76,7 +77,7 @@ def convert_log_to_csv(log_file_path: str, output_path: Optional[str] = None) ->
     
     Args:
         log_file_path: Path to JSON log file
-        output_path: Optional output CSV path. If None, uses same directory as log file.
+        output_path: Optional output CSV path. If None, saves to data/ directory.
     
     Returns:
         Path to generated CSV file
@@ -89,11 +90,15 @@ def convert_log_to_csv(log_file_path: str, output_path: Optional[str] = None) ->
     with open(log_path, "r", encoding="utf-8") as f:
         log_data = json.load(f)
     
-    # Generate output path
+    # Generate output path - save to data/export/ directory
     if output_path is None:
-        output_path = log_path.parent / f"{log_path.stem}.csv"
+        # Create data/export directory if it doesn't exist
+        export_dir = Path("data/export")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        output_path = export_dir / f"{log_path.stem}.csv"
     else:
         output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Convert to CSV
     questions = log_data.get("questions", [])
@@ -121,8 +126,36 @@ def convert_log_to_csv(log_file_path: str, output_path: Optional[str] = None) ->
     return str(output_path)
 
 
-def list_log_files(log_dir: str = "logs") -> List[Dict[str, str]]:
-    """List all available log files.
+def get_csv_path_for_log(log_file_path: str) -> str:
+    """Get the expected CSV path for a log file without converting.
+    
+    Args:
+        log_file_path: Path to JSON log file
+    
+    Returns:
+        Expected CSV file path
+    """
+    log_path = Path(log_file_path)
+    export_dir = Path("data/export")
+    export_dir.mkdir(parents=True, exist_ok=True)
+    return str(export_dir / f"{log_path.stem}.csv")
+
+
+def csv_exists_for_log(log_file_path: str) -> bool:
+    """Check if CSV file already exists for a log file.
+    
+    Args:
+        log_file_path: Path to JSON log file
+    
+    Returns:
+        True if CSV exists, False otherwise
+    """
+    csv_path = get_csv_path_for_log(log_file_path)
+    return Path(csv_path).exists()
+
+
+def list_log_files(log_dir: str = "data/frontend") -> List[Dict[str, str]]:
+    """List all available log files from data/frontend/ directory.
     
     Returns:
         List of dicts with file info: {path, request_id, generated_at, total_questions}
@@ -148,4 +181,95 @@ def list_log_files(log_dir: str = "logs") -> List[Dict[str, str]]:
     # Sort by generated_at (newest first)
     log_files.sort(key=lambda x: x.get("generated_at", ""), reverse=True)
     return log_files
+
+
+def delete_log_files(log_file_path: str) -> Dict[str, bool]:
+    """Delete log files (JSON, TXT, CSV) for a given log file.
+    
+    Args:
+        log_file_path: Path to JSON log file
+    
+    Returns:
+        Dict with deletion status: {json_deleted, txt_deleted, csv_deleted}
+    """
+    log_path = Path(log_file_path)
+    if not log_path.exists():
+        return {"json_deleted": False, "txt_deleted": False, "csv_deleted": False}
+    
+    result = {"json_deleted": False, "txt_deleted": False, "csv_deleted": False}
+    
+    # Read request_id from JSON file
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+        request_id = log_data.get("request_id", "")
+    except Exception:
+        request_id = ""
+    
+    # Delete JSON file
+    try:
+        if log_path.exists():
+            log_path.unlink()
+            result["json_deleted"] = True
+    except Exception:
+        pass
+    
+    # Delete corresponding TXT file from data/backend/
+    if request_id:
+        try:
+            backend_dir = Path("data/backend")
+            if backend_dir.exists():
+                # Find TXT file with matching request_id
+                for txt_file in backend_dir.glob("questions_*.txt"):
+                    try:
+                        with open(txt_file, "r", encoding="utf-8") as f:
+                            content = f.read()
+                            if request_id[:8] in content or request_id in content:
+                                txt_file.unlink()
+                                result["txt_deleted"] = True
+                                break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    
+    # Delete corresponding CSV file from data/export/
+    try:
+        csv_path = get_csv_path_for_log(log_file_path)
+        csv_file = Path(csv_path)
+        if csv_file.exists():
+            csv_file.unlink()
+            result["csv_deleted"] = True
+    except Exception:
+        pass
+    
+    return result
+
+
+def list_csv_files(data_dir: str = "data/export") -> List[Dict[str, str]]:
+    """List all available CSV files in data/export/ directory.
+    
+    Returns:
+        List of dicts with file info: {path, filename, size, modified_at}
+    """
+    data_path = Path(data_dir)
+    if not data_path.exists():
+        return []
+    
+    csv_files = []
+    for csv_file in data_path.glob("*.csv"):
+        try:
+            stat = csv_file.stat()
+            csv_files.append({
+                "path": str(csv_file),
+                "filename": csv_file.name,
+                "size": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+        except Exception:
+            continue
+    
+    # Sort by modified_at (newest first)
+    csv_files.sort(key=lambda x: x.get("modified_at", ""), reverse=True)
+    return csv_files
 

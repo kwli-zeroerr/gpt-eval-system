@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { fetchCategories, generateQuestions } from "./api";
 import { Category, QuestionItem } from "./types";
 
@@ -24,6 +24,12 @@ function App() {
   const [categoryTimes, setCategoryTimes] = useState<Record<string, number>>({});
   const [totalTime, setTotalTime] = useState<number | null>(null);
   const [categoryPages, setCategoryPages] = useState<Record<string, number>>({});
+  const [questionGenProgress, setQuestionGenProgress] = useState<{
+    currentCategory: string;
+    completedCategories: string[];
+    totalCategories: number;
+  } | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     fetchCategories()
@@ -35,6 +41,16 @@ function App() {
         if (cats.length > 0) setActiveTab(cats[0].id);
       })
       .catch((e) => setError(String(e)));
+  }, []);
+
+  // Cleanup WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
   }, []);
 
   // 所有分类都会被使用
@@ -113,11 +129,24 @@ function App() {
     setResults([]);
     setCategoryTimes({});
     setTotalTime(null);
+    // Initialize question generation progress
+    setQuestionGenProgress({
+      currentCategory: "",
+      completedCategories: [],
+      totalCategories: 6,
+    });
+    
+    // Close existing WebSocket if any
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     
     // Use WebSocket for real-time progress
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws/generate`;
     const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
     
     ws.onopen = () => {
       // Send request
@@ -147,6 +176,22 @@ function App() {
           percentage: data.percentage,
           elapsed: data.elapsed,
         });
+        // Update question generation progress
+        if (data.category) {
+          setQuestionGenProgress((prev) => {
+            if (!prev) {
+              return {
+                currentCategory: data.category,
+                completedCategories: [],
+                totalCategories: 6,
+              };
+            }
+            return {
+              ...prev,
+              currentCategory: data.category,
+            };
+          });
+        }
       } else if (data.type === 'category_complete') {
         // Real-time display: add questions for this category immediately
         const newQuestions = (data.questions || []).map((q: any) => ({
@@ -161,18 +206,45 @@ function App() {
         });
         // Initialize page to 1 for this category
         setCategoryPages((prev) => ({ ...prev, [data.category]: 1 }));
+        // Update question generation progress - mark category as completed
+        setQuestionGenProgress((prev) => {
+          if (!prev) {
+            return {
+              currentCategory: "",
+              completedCategories: [data.category],
+              totalCategories: 6,
+            };
+          }
+          const completed = [...prev.completedCategories];
+          if (!completed.includes(data.category)) {
+            completed.push(data.category);
+          }
+          return {
+            ...prev,
+            completedCategories: completed,
+            currentCategory: "",
+          };
+        });
       } else if (data.type === 'complete') {
         setResults(data.questions || []);
         setCategoryTimes(data.category_times || {});
         setTotalTime(data.total_time || null);
         setLoading(false);
         setProgress(null);
-        ws.close();
+        // Keep questionGenProgress to show final state
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
       } else if (data.type === 'error') {
         setError(data.message || '生成失败');
         setLoading(false);
         setProgress(null);
-        ws.close();
+        setQuestionGenProgress(null);
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
       }
     };
     
@@ -180,16 +252,23 @@ function App() {
       setError('WebSocket连接错误');
       setLoading(false);
       setProgress(null);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
     
     ws.onclose = () => {
       // Connection closed
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
     };
   };
 
   return (
-    <div className="page">
-      <h1>问题生成（可配置分类与 Prompt）</h1>
+    <div className="question-gen-module">
+      <h2>问题生成</h2>
       <p>调整 Prompt 与数量；默认每类 5 条，所有分类都会生成问题。</p>
 
       <div className="controls">
@@ -207,6 +286,33 @@ function App() {
         </button>
         <span>{categories.length} 个分类</span>
       </div>
+
+      {/* S1-S6 Category Progress Bar */}
+      {questionGenProgress && (loading || questionGenProgress.completedCategories.length > 0) && (
+        <div className="question-gen-progress">
+          <div className="qg-progress-title">问题生成进度 (S1-S6)</div>
+          <div className="qg-categories-bar">
+            {["S1", "S2", "S3", "S4", "S5", "S6"].map((cat) => {
+              const isCompleted = questionGenProgress.completedCategories.includes(cat);
+              const isCurrent = questionGenProgress.currentCategory === cat;
+              return (
+                <div
+                  key={cat}
+                  className={`qg-category-item ${isCompleted ? "completed" : ""} ${isCurrent ? "active" : ""}`}
+                  title={isCompleted ? `${cat} 已完成` : isCurrent ? `正在生成 ${cat}` : `${cat} 等待中`}
+                >
+                  {isCompleted ? "✓" : isCurrent ? "⟳" : cat}
+                </div>
+              );
+            })}
+          </div>
+          {questionGenProgress.currentCategory && (
+            <div className="qg-current-status">
+              正在生成 {questionGenProgress.currentCategory} 类别问题...
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Progress Bar */}
       {progress && (

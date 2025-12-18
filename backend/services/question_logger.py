@@ -15,11 +15,16 @@ def save_questions_to_log(
 ) -> str:
     """Save questions to log file in both human-readable and JSON format.
     
+    JSON files go to data/frontend/ (for frontend consumption)
+    TXT files go to data/backend/ (for backend logs)
+    
     Returns the path to the JSON log file.
     """
-    # Create logs directory if it doesn't exist
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    # Create data directories if they don't exist
+    frontend_dir = Path("data/frontend")
+    backend_dir = Path("data/backend")
+    frontend_dir.mkdir(parents=True, exist_ok=True)
+    backend_dir.mkdir(parents=True, exist_ok=True)
     
     # Group questions by category
     questions_by_category: dict[str, List[QuestionItem]] = {}
@@ -49,12 +54,12 @@ def save_questions_to_log(
             log_lines.append(f"{idx}. {q.text}{ref_info}")
         log_lines.append("")
     
-    # Write human-readable file
+    # Write human-readable file to data/backend/
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    txt_file = log_dir / f"questions_{timestamp}_{request_id[:8]}.txt"
+    txt_file = backend_dir / f"questions_{timestamp}_{request_id[:8]}.txt"
     txt_file.write_text("\n".join(log_lines), encoding="utf-8")
     
-    # Write JSON file (for format conversion module)
+    # Write JSON file to data/frontend/ (for format conversion module)
     json_data = {
         "request_id": request_id,
         "generated_at": datetime.now().isoformat(),
@@ -70,7 +75,7 @@ def save_questions_to_log(
             for q in questions
         ]
     }
-    json_file = log_dir / f"questions_{timestamp}_{request_id[:8]}.json"
+    json_file = frontend_dir / f"questions_{timestamp}_{request_id[:8]}.json"
     json_file.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
     
     return str(json_file)
