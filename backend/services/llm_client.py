@@ -1,8 +1,16 @@
 import os
 import logging
+from pathlib import Path
+
 import httpx
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
+# 确保在导入时就加载后端目录下的 .env（避免不同工作目录导致找不到环境变量）
+_default_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _default_env_path.exists():
+    load_dotenv(dotenv_path=_default_env_path)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useModuleState } from "../contexts/ModuleStateContext";
 
 interface LogFile {
   path: string;
@@ -9,28 +10,168 @@ interface LogFile {
 }
 
 function FormatConvert() {
+  const { getModuleState, setModuleState } = useModuleState();
+  const moduleId = "format_convert";
+  
+  // 从状态管理恢复状态
+  const savedState = getModuleState(moduleId) || {};
+  
   const [logs, setLogs] = useState<LogFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedLog, setSelectedLog] = useState<string | null>(null);
-  const [csvPreview, setCsvPreview] = useState<string[][]>([]);
-  const [csvFullData, setCsvFullData] = useState<string[][]>([]);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [rowsPerPage, setRowsPerPage] = useState<number>(20);
+  const [selectedLog, setSelectedLog] = useState<string | null>(savedState.selectedLog || null);
+  const [csvPreview, setCsvPreview] = useState<string[][]>(savedState.csvPreview || []);
+  const [csvFullData, setCsvFullData] = useState<string[][]>(savedState.csvFullData || []);
+  const [currentPage, setCurrentPage] = useState<number>(savedState.currentPage || 1);
+  const [rowsPerPage, setRowsPerPage] = useState<number>(savedState.rowsPerPage || 20);
   const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; logId: string | null }>({
     show: false,
     logId: null,
   });
+  
+  // 保存状态到状态管理
+  useEffect(() => {
+    setModuleState(moduleId, {
+      selectedLog,
+      csvPreview,
+      csvFullData,
+      currentPage,
+      rowsPerPage,
+    });
+  }, [selectedLog, csvPreview, csvFullData, currentPage, rowsPerPage, setModuleState]);
 
+  // 只在组件挂载时获取日志列表，并按时间排序，默认选中最新的
   useEffect(() => {
     fetchLogs();
   }, []);
+
+  // 当logs更新时，自动选中最新的日志（但不自动预览，避免重复加载）
+  useEffect(() => {
+    if (logs.length > 0 && !selectedLog) {
+      // 按生成时间排序，最新的在前
+      const sortedLogs = [...logs].sort((a, b) => {
+        const timeA = new Date(a.generated_at).getTime();
+        const timeB = new Date(b.generated_at).getTime();
+        return timeB - timeA;
+      });
+      const latestLog = sortedLogs[0];
+      if (latestLog) {
+        setSelectedLog(latestLog.request_id);
+      }
+    }
+  }, [logs, selectedLog]);
+  
+  // 单独处理管道完成事件，不依赖 logs 状态
+  useEffect(() => {
+    const handlePipelineComplete = async (event: CustomEvent) => {
+      const { log_path } = event.detail;
+      if (!log_path) return;
+      
+      // 等待一下确保文件已经生成
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // 重新获取最新的日志列表（不更新状态，避免触发其他 useEffect）
+      try {
+        const response = await fetch("/api/format/logs");
+        const data = await response.json();
+        const logsList = data.logs || [];
+        
+        // 找到对应的日志
+        const log = logsList.find((l: LogFile) => l.path === log_path);
+        if (log) {
+          const logId = log.request_id;
+          setSelectedLog(logId);
+          
+          // 直接执行预览逻辑，不调用 previewCSV 避免依赖 logs 状态
+          try {
+            // 转换 CSV（如果需要）
+            const convertResponse = await fetch("/api/format/convert", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ log_file_path: log.path }),
+            });
+            if (!convertResponse.ok) {
+              throw new Error("转换失败");
+            }
+            
+            // 读取 CSV 文件
+            const csvResponse = await fetch(`/api/format/download/${logId}`);
+            if (!csvResponse.ok) {
+              throw new Error("下载失败");
+            }
+            const csvText = await csvResponse.text();
+            
+            // 解析 CSV（复用 previewCSV 中的解析逻辑）
+            const parseCSV = (text: string): string[][] => {
+              const rows: string[][] = [];
+              let currentRow: string[] = [];
+              let currentField = "";
+              let inQuotes = false;
+              
+              for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                const nextChar = i + 1 < text.length ? text[i + 1] : null;
+                
+                if (char === '"') {
+                  if (inQuotes && nextChar === '"') {
+                    currentField += '"';
+                    i++;
+                  } else {
+                    inQuotes = !inQuotes;
+                  }
+                } else if (char === ',' && !inQuotes) {
+                  currentRow.push(currentField.trim());
+                  currentField = "";
+                } else if ((char === '\n' || char === '\r') && !inQuotes) {
+                  if (currentField || currentRow.length > 0) {
+                    currentRow.push(currentField.trim());
+                    rows.push(currentRow);
+                  }
+                  currentRow = [];
+                  currentField = "";
+                  if (char === '\r' && nextChar === '\n') i++;
+                } else {
+                  currentField += char;
+                }
+              }
+              
+              if (currentField || currentRow.length > 0) {
+                currentRow.push(currentField.trim());
+                rows.push(currentRow);
+              }
+              
+              return rows;
+            };
+            
+            const allRows = parseCSV(csvText);
+            setCsvFullData(allRows);
+            setCsvPreview(allRows.slice(0, rowsPerPage));
+            setCurrentPage(1);
+          } catch (e) {
+            console.error("自动加载格式转换预览失败", e);
+          }
+        }
+      } catch (e) {
+        console.error("自动加载格式转换结果失败", e);
+      }
+    };
+    
+    window.addEventListener('pipeline-complete-format-convert', handlePipelineComplete as EventListener);
+    
+    return () => {
+      window.removeEventListener('pipeline-complete-format-convert', handlePipelineComplete as EventListener);
+    };
+  }, [rowsPerPage]); // 只依赖 rowsPerPage，不会频繁触发
 
   const fetchLogs = async () => {
     try {
       const response = await fetch("/api/format/logs");
       const data = await response.json();
-      const logsList = data.logs || [];
+      const logsList = (data.logs || []).sort((a: LogFile, b: LogFile) => {
+        const ta = new Date(a.generated_at).getTime();
+        const tb = new Date(b.generated_at).getTime();
+        return tb - ta; // 最新在前
+      });
       
       // Check CSV existence for each log
       const logsWithCsvStatus = await Promise.all(
@@ -46,6 +187,11 @@ function FormatConvert() {
       );
       
       setLogs(logsWithCsvStatus);
+
+      // 默认选中最新的日志
+      if (logsWithCsvStatus.length > 0 && !selectedLog) {
+        setSelectedLog(logsWithCsvStatus[0].request_id);
+      }
     } catch (e) {
       setError("获取日志文件失败");
     }
@@ -397,12 +543,14 @@ function FormatConvert() {
             <div className="modal-body">
               <p>确定要删除此日志文件吗？</p>
               <p className="modal-warning">
-                <strong>警告：</strong>此操作将删除以下文件：
+                <strong>警告：</strong>此操作将删除以下所有关联文件：
               </p>
               <ul className="modal-file-list">
                 <li>JSON 日志文件 (data/frontend/)</li>
                 <li>TXT 日志文件 (data/backend/)</li>
-                <li>CSV 文件 (data/export/) - 如果存在</li>
+                <li>CSV 文件 (data/export/) - 格式转换输出</li>
+                <li>检索 CSV 文件 (data/retrieval/) - 检索模块输出（如果存在）</li>
+                <li>评测 CSV 和 JSON 文件 (data/evaluation/) - 评测模块输出（如果存在）</li>
               </ul>
               <p className="modal-warning-text">此操作无法撤销！</p>
             </div>

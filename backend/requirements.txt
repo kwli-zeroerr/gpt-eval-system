@@ -9,4 +9,5 @@ websockets
 pyfiglet
 pandas
 requests
+ragas
 

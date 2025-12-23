@@ -1,13 +1,14 @@
 """Pipeline service for running all modules in sequence."""
 import logging
 import os
+import time
 from typing import Dict, List, Optional, Callable, Awaitable
 from schemas import GenerateRequest, QuestionItem
 from services.generator import generate_questions
 from services.question_logger import save_questions_to_log
 from services.format_converter import convert_log_to_csv
 from services.retrieval_service import run_retrieval
-from services.evaluation_service import run_evaluation
+from services.evaluation_service import run_evaluation, EvaluationMode
 
 logger = logging.getLogger(__name__)
 
@@ -103,18 +104,21 @@ async def run_full_pipeline(
         
         if not ragflow_api_url or not ragflow_api_key:
             logger.warning("RagFlow API 配置未设置，跳过检索模块")
-        results["retrieval"] = {
-            "status": "skipped",
+            results["retrieval"] = {
+                "status": "skipped",
                 "message": "RagFlow API 配置未设置",
             }
             if progress_callback:
                 await progress_callback("retrieval", "skipped", results["retrieval"])
         else:
-            # 检索配置（可从环境变量读取）
+            # 检索配置（从环境变量读取，参考 .env 文件）
             retrieval_config = {
                 "top_k": int(os.getenv("RAGFLOW_TOP_K", "5")),
                 "similarity_threshold": float(os.getenv("RAGFLOW_SIMILARITY_THRESHOLD", "0.0")),
                 "vector_similarity_weight": float(os.getenv("RAGFLOW_VECTOR_SIMILARITY_WEIGHT", "0.3")) if os.getenv("RAGFLOW_VECTOR_SIMILARITY_WEIGHT") else None,
+                "rerank_id": os.getenv("RAGFLOW_RERANK_ID", None),
+                "keyword": os.getenv("RAGFLOW_KEYWORD", "false").lower() == "true",
+                "highlight": os.getenv("RAGFLOW_HIGHLIGHT", "false").lower() == "true",
             }
             
             async def retrieval_progress(current: int, total: int, data: Dict):
@@ -138,15 +142,26 @@ async def run_full_pipeline(
             )
             
             results["retrieval"] = retrieval_result
-        
-        if progress_callback:
-                await progress_callback("retrieval", "complete", retrieval_result)
+            if progress_callback:
+                # 发送检索完成消息，确保包含明确的完成标识
+                await progress_callback("retrieval", "complete", {
+                    "output_csv_path": retrieval_result.get("output_csv_path"),
+                    "total_questions": retrieval_result.get("total_questions", 0),
+                    "completed": retrieval_result.get("completed", 0),
+                    "failed": retrieval_result.get("failed", 0),
+                    "total_time": retrieval_result.get("total_time", 0),
+                })
             
             # 使用检索后的 CSV 进行评测
             csv_path = retrieval_result["output_csv_path"]
         
         # Step 4: Evaluation
         if progress_callback:
+            # #region agent log
+            import json
+            with open("/home/zeroerr-ai71/kiven/.cursor/debug.log", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId": "debug-session", "runId": "pipeline-evaluation", "hypothesisId": "B", "location": "pipeline.py:152", "message": "Sending evaluation start callback", "data": {"module": "evaluation", "status": "start"}, "timestamp": time.time()}) + "\n")
+            # #endregion
             await progress_callback("evaluation", "start", {"message": "开始评测..."})
         
         # 检查是否有检索结果
@@ -160,9 +175,17 @@ async def run_full_pipeline(
                         **data
                     })
             
+            # 从环境变量或请求中获取评测模式（默认 hybrid）
+            evaluation_mode_str = os.getenv("EVALUATION_MODE", "hybrid")
+            if evaluation_mode_str not in ("chapter_match", "ragas", "hybrid"):
+                evaluation_mode_str = "hybrid"
+                logger.warning(f"无效的评测模式，使用默认值: hybrid")
+            evaluation_mode: EvaluationMode = evaluation_mode_str  # type: ignore
+            
             evaluation_result = await run_evaluation(
                 csv_path=csv_path,
                 output_dir=None,  # 使用默认目录
+                mode=evaluation_mode,
                 progress_callback=evaluation_progress,
             )
             
@@ -171,13 +194,12 @@ async def run_full_pipeline(
             if progress_callback:
                 await progress_callback("evaluation", "complete", evaluation_result)
         else:
-        results["evaluation"] = {
-            "status": "skipped",
+            results["evaluation"] = {
+                "status": "skipped",
                 "message": "检索模块未完成，跳过评测",
-        }
-        
-        if progress_callback:
-            await progress_callback("evaluation", "skipped", results["evaluation"])
+            }
+            if progress_callback:
+                await progress_callback("evaluation", "skipped", results["evaluation"])
         
         return results
         

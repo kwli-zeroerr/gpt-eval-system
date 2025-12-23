@@ -2,11 +2,13 @@
 import logging
 import os
 import traceback
-from typing import Dict
+from pathlib import Path
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException
 
-from services.retrieval_service import run_retrieval
+from services.retrieval_service import run_retrieval, load_test_cases_from_csv
+from config.paths import DATA_RETRIEVAL_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,74 @@ async def run_retrieval_api(request: Dict):
         error_msg = str(exc)
         error_trace = traceback.format_exc()
         logger.error("Retrieval error: %s\n%s", error_msg, error_trace)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@router.get("/api/retrieval/results")
+async def list_retrieval_results():
+    """List all retrieval result CSV files."""
+    try:
+        result_files = []
+        if DATA_RETRIEVAL_DIR.exists():
+            for csv_file in DATA_RETRIEVAL_DIR.glob("*_with_answers.csv"):
+                stat = csv_file.stat()
+                result_files.append({
+                    "path": str(csv_file),
+                    "filename": csv_file.name,
+                    "size": stat.st_size,
+                    "modified_at": stat.st_mtime,
+                })
+        # 按修改时间倒序排列
+        result_files.sort(key=lambda x: x["modified_at"], reverse=True)
+        return {"result_files": result_files}
+    except Exception as exc:
+        logger.error(f"List retrieval results error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/api/retrieval/result")
+async def get_retrieval_result(csv_path: str) -> Dict[str, Any]:
+    """Return detailed retrieval results for a given CSV（用于前端分页展示）."""
+    try:
+        csv_path_obj = Path(csv_path)
+
+        # 仅允许访问检索结果目录下的文件，防止任意文件读取
+        base_dir = DATA_RETRIEVAL_DIR.resolve()
+        if csv_path_obj.is_absolute():
+            full_path = csv_path_obj
+        else:
+            # 支持传入完整相对路径或仅文件名
+            if csv_path_obj.parent == Path(""):
+                full_path = base_dir / csv_path_obj.name
+            else:
+                full_path = Path(csv_path).resolve()
+
+        full_path = full_path.resolve()
+        if base_dir not in full_path.parents and base_dir != full_path.parent:
+            raise HTTPException(status_code=400, detail="无效的 CSV 路径")
+
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail="CSV 文件不存在")
+
+        test_cases = load_test_cases_from_csv(str(full_path))
+        items: List[Dict[str, str]] = []
+        for tc in test_cases:
+            items.append(
+                {
+                    "question": tc.question,
+                    "answer": tc.answer,
+                    "reference": tc.reference,
+                    "type": tc.type or "",
+                    "theme": tc.theme or "",
+                }
+            )
+        return {"items": items, "total": len(items), "csv_path": str(full_path)}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        error_msg = str(exc)
+        error_trace = traceback.format_exc()
+        logger.error("Get retrieval result error: %s\n%s", error_msg, error_trace)
         raise HTTPException(status_code=500, detail=error_msg)
 
 

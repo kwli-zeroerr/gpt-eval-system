@@ -134,4 +134,3 @@ async def get_latest_evaluation_summary():
         logger.error("Error reading summary: %s", exc)
         return {"summary": None}
 
-

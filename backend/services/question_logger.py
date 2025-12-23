@@ -81,3 +81,45 @@ def save_questions_to_log(
     
     return str(json_file)
 
+
+def get_latest_log_path() -> Path:
+    """获取最新的问题日志文件路径"""
+    if not DATA_FRONTEND_DIR.exists():
+        return None
+    
+    json_files = list(DATA_FRONTEND_DIR.glob("questions_*.json"))
+    if not json_files:
+        return None
+    
+    # 按修改时间排序，返回最新的
+    latest = max(json_files, key=lambda p: p.stat().st_mtime)
+    return latest
+
+
+def load_questions_from_log(log_path: str) -> tuple[List[QuestionItem], Dict[str, float], float]:
+    """从日志文件加载问题
+    
+    Returns:
+        (questions, category_times, total_time)
+    """
+    path = Path(log_path)
+    if not path.exists():
+        return [], {}, 0.0
+    
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    questions = [
+        QuestionItem(
+            category=q.get("category", ""),
+            text=q.get("question", ""),
+            reference=q.get("reference", "")
+        )
+        for q in data.get("questions", [])
+    ]
+    
+    category_times = data.get("category_times", {})
+    total_time = data.get("total_time", 0.0)
+    
+    return questions, category_times, total_time
+

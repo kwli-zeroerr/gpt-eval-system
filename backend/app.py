@@ -10,6 +10,7 @@ from routers.format_convert_routes import router as format_convert_router
 from routers.retrieval_routes import router as retrieval_router
 from routers.evaluation_routes import router as evaluation_router
 from routers.pipeline_routes import router as pipeline_router
+from routers.ragflow_routes import router as ragflow_router
 
 # Load environment variables from .env file
 load_dotenv()
@@ -17,6 +18,11 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Disable httpx HTTP request logs (only show errors)
+# This must be set before any httpx imports
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)  # httpcore is used by httpx
 
 # Print figlet banner on startup
 figlet_text = pyfiglet.figlet_format("GPT-Evaluation System", font="standard")
@@ -33,6 +39,7 @@ app.include_router(format_convert_router)
 app.include_router(retrieval_router)
 app.include_router(evaluation_router)
 app.include_router(pipeline_router)
+app.include_router(ragflow_router)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual run helper
