@@ -572,7 +572,22 @@ function Index() {
                 <div className="progress-modules">
                   {MODULES.map((module, idx) => {
                     const moduleKey = module.id;
-                    const status = pipelineProgress[moduleKey] || "pending";
+                    // 优先使用 pipelineStep 来判断状态，确保与 segmented-progress-container 同步
+                    // 如果 pipelineStep 已经超过当前模块，说明已完成
+                    // 如果 pipelineStep 等于当前模块索引，说明正在进行
+                    // 如果 pipelineStep 小于当前模块索引，说明等待中
+                    let status: string;
+                    if (idx < pipelineStep) {
+                      // 已完成
+                      status = "complete";
+                    } else if (idx === pipelineStep) {
+                      // 正在进行，使用 pipelineProgress 中的详细状态
+                      status = pipelineProgress[moduleKey] || "progress";
+                    } else {
+                      // 等待中
+                      status = "pending";
+                    }
+                    
                     const isQuestionGen = module.id === "question_gen";
                     // Show category progress when question-gen is active or has progress data
                     // Keep showing until all 6 categories are completed or module moves to next step
@@ -582,7 +597,7 @@ function Index() {
                     return (
                       <div key={module.id} className={`progress-module ${status}`}>
                         <span className="module-indicator">
-                          {status === "complete" ? "✓" : status === "start" ? "⟳" : idx + 1}
+                          {status === "complete" ? "✓" : status === "start" || status === "progress" ? "⟳" : idx + 1}
                         </span>
                         <span className="module-name">{module.name}</span>
                         <span className="module-status">

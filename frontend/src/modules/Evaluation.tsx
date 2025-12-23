@@ -469,19 +469,43 @@ function Evaluation() {
             </div>
           </div>
 
-          {/* Dashboard Style KPI Display */}
+          {/* 核心指标 - 精简版 */}
           <div className="dashboard-section">
             <div className="section-header">
               <h3>核心指标</h3>
               <p className="section-subtitle">
-                评测模式：{result.mode === "hybrid" ? "混合评测" : result.mode === "ragas" ? "Ragas AI 评测" : "章节匹配评测"} | 
-                总问题数：{result.summary.total_questions} | 
-                耗时：{result.total_time.toFixed(2)} 秒
+                {result.mode === "hybrid" ? "混合评测" : result.mode === "ragas" ? "Ragas AI 评测" : "章节匹配评测"} · 
+                共 {result.summary.total_questions} 个问题 · 
+                耗时 {result.total_time.toFixed(2)} 秒
               </p>
             </div>
             
             <div className="dashboard-metrics">
-              {/* 答案相关性 - 主要指标（与概览页面对齐） */}
+              {/* 综合得分 - 最重要指标 */}
+              {result.mode === "hybrid" && result.summary.hybrid_score_percentage !== undefined && (
+                <div className="metric-card apple-style" style={{ border: "2px solid #007AFF", background: "linear-gradient(135deg, #f0f9ff 0%, #ffffff 100%)" }}>
+                  <div className="metric-label">
+                    综合得分
+                    <MetricTooltip text="混合评测的综合得分，结合章节匹配准确率（权重40%）和Ragas综合得分（权重60%）计算。" />
+                  </div>
+                  <div className="metric-value" style={{ color: "#007AFF" }}>
+                    {result.summary.hybrid_score_percentage.toFixed(2)}%
+                  </div>
+                </div>
+              )}
+              {result.mode !== "hybrid" && result.summary.ragas_overall_score_percentage !== undefined && (
+                <div className="metric-card apple-style" style={{ border: "2px solid #007AFF", background: "linear-gradient(135deg, #f0f9ff 0%, #ffffff 100%)" }}>
+                  <div className="metric-label">
+                    综合得分
+                    <MetricTooltip text="Ragas AI 评测的综合得分，基于答案质量、相关性等指标的平均值计算。" />
+                  </div>
+                  <div className="metric-value" style={{ color: "#007AFF" }}>
+                    {result.summary.ragas_overall_score_percentage?.toFixed(2) || "0.00"}%
+                  </div>
+                </div>
+              )}
+              
+              {/* 答案相关性 */}
               {result.summary.ragas_relevancy_score_percentage !== undefined && (
                 <div className="metric-card apple-style">
                   <div className="metric-label">
@@ -494,7 +518,7 @@ function Evaluation() {
                 </div>
               )}
               
-              {/* 答案质量（与概览页面对齐） */}
+              {/* 答案质量 */}
               {result.summary.ragas_quality_score_percentage !== undefined && (
                 <div className="metric-card apple-style">
                   <div className="metric-label">
@@ -507,7 +531,7 @@ function Evaluation() {
                 </div>
               )}
               
-              {/* 章节匹配准确率（与概览页面对齐） */}
+              {/* 章节匹配准确率 */}
               {(result.summary.chapter_match_accuracy_percentage !== undefined || result.summary.accuracy_percentage !== undefined) && (
                 <div className="metric-card apple-style">
                   <div className="metric-label">
@@ -520,18 +544,7 @@ function Evaluation() {
                 </div>
               )}
               
-              {/* 总问题数（与概览页面对齐） */}
-              <div className="metric-card apple-style">
-                <div className="metric-label">
-                  总问题数
-                  <MetricTooltip text="本次评测包含的问题总数。" />
-                </div>
-                <div className="metric-value">
-                  {result.summary.total_questions || 0}
-                </div>
-              </div>
-              
-              {/* 检索成功率（与概览页面对齐） */}
+              {/* 检索成功率 */}
               {result.summary.retrieval_success_rate_percentage !== undefined && (
                 <div className="metric-card apple-style">
                   <div className="metric-label">
@@ -540,45 +553,6 @@ function Evaluation() {
                   </div>
                   <div className="metric-value">
                     {result.summary.retrieval_success_rate_percentage.toFixed(2)}%
-                  </div>
-                </div>
-              )}
-              
-              {/* 章节匹配召回率（评测页面特有，概览页面不显示） */}
-              {(result.summary.chapter_match_recall_percentage !== undefined || result.summary.recall_percentage !== undefined) && (
-                <div className="metric-card apple-style">
-                  <div className="metric-label">
-                    章节匹配召回率
-                    <MetricTooltip text="章节匹配的召回率，反映系统能够正确匹配的答案占所有应该匹配答案的比例。" />
-                  </div>
-                  <div className="metric-value">
-                    {(result.summary.chapter_match_recall_percentage ?? result.summary.recall_percentage ?? 0).toFixed(2)}%
-                  </div>
-                </div>
-              )}
-              
-              {/* Ragas 综合得分 - 仅在非混合模式显示（评测页面特有） */}
-              {result.mode !== "hybrid" && result.summary.ragas_overall_score_percentage !== undefined && (
-                <div className="metric-card apple-style">
-                  <div className="metric-label">
-                    Ragas 综合得分
-                    <MetricTooltip text="Ragas AI 评测的综合得分，基于答案质量、相关性等指标的平均值计算。" />
-                  </div>
-                  <div className="metric-value">
-                    {result.summary.ragas_overall_score_percentage?.toFixed(2) || "0.00"}%
-                  </div>
-                </div>
-              )}
-              
-              {/* 混合评测综合得分 - 突出显示（评测页面特有） */}
-              {result.mode === "hybrid" && result.summary.hybrid_score_percentage !== undefined && (
-                <div className="metric-card apple-style" style={{ border: "2px solid #007AFF", background: "linear-gradient(135deg, #f0f9ff 0%, #ffffff 100%)" }}>
-                  <div className="metric-label">
-                    混合评测综合得分
-                    <MetricTooltip text="混合评测的综合得分，结合章节匹配准确率（权重40%）和Ragas综合得分（权重60%）计算。" />
-                  </div>
-                  <div className="metric-value" style={{ color: "#007AFF" }}>
-                    {result.summary.hybrid_score_percentage.toFixed(2)}%
                   </div>
                 </div>
               )}
@@ -602,103 +576,104 @@ function Evaluation() {
                 </div>
               </div>
             )}
-            
-            {/* 相关性得分分布 */}
-            {result.summary.ragas_relevancy_excellent_count !== undefined && (
-              <div className="dashboard-section" style={{ marginTop: "32px" }}>
-                <div className="section-header">
-                  <h3>相关性得分分布</h3>
-                  <p className="section-subtitle">按得分等级统计</p>
-                </div>
-                  <div className="dashboard-metrics">
-                    <div className="metric-card apple-style">
-                      <div className="metric-label">
-                        优秀 (≥80%)
-                        <MetricTooltip text="答案相关性得分在80%以上的问题数量，表示答案与问题高度相关，用户满意度高。" />
-                      </div>
-                      <div className="metric-value">
-                        {result.summary.ragas_relevancy_excellent_count || 0}
-                      </div>
-                    </div>
-                    <div className="metric-card apple-style">
-                      <div className="metric-label">
-                        良好 (60-80%)
-                        <MetricTooltip text="答案相关性得分在60%-80%之间的问题数量，表示答案与问题相关，但仍有改进空间。" />
-                      </div>
-                      <div className="metric-value">
-                        {result.summary.ragas_relevancy_good_count || 0}
-                      </div>
-                    </div>
-                    <div className="metric-card apple-style">
-                      <div className="metric-label">
-                        一般 (40-60%)
-                        <MetricTooltip text="答案相关性得分在40%-60%之间的问题数量，表示答案与问题相关性一般，需要改进。" />
-                      </div>
-                      <div className="metric-value">
-                        {result.summary.ragas_relevancy_fair_count || 0}
-                      </div>
-                    </div>
-                    <div className="metric-card apple-style">
-                      <div className="metric-label">
-                        较差 (&lt;40%)
-                        <MetricTooltip text="答案相关性得分低于40%的问题数量，表示答案与问题相关性较差，需要重点关注和改进。" />
-                      </div>
-                      <div className="metric-value">
-                        {result.summary.ragas_relevancy_poor_count || 0}
-                      </div>
-                    </div>
-                  </div>
-              </div>
-            )}
-            
-            {/* 按问题类型的相关性分布 */}
-            {result.summary.S1_relevancy_score_percentage !== undefined && (
-              <div className="dashboard-section" style={{ marginTop: "32px" }}>
-                <div className="section-header">
-                  <h3>按问题类型的相关性得分</h3>
-                  <p className="section-subtitle">各类型问题的相关性表现</p>
-                </div>
-                <div className="dashboard-metrics">
-                  {["S1", "S2", "S3", "S4", "S5", "S6"].map((type) => {
-                    const score = result.summary[`${type}_relevancy_score_percentage`];
-                    const count = result.summary[`${type}_count`];
-                    if (score === undefined) return null;
-                    
-                      const typeNames: Record<string, string> = {
-                        "S1": "数值问答",
-                        "S2": "定义问答",
-                        "S3": "多选题",
-                        "S4": "单文件多段",
-                        "S5": "多文件多段",
-                        "S6": "对抗数据/敏感信息"
-                      };
-                      
-                      return (
-                        <div key={type} className="metric-card apple-style">
-                          <div className="metric-label">
-                            {type}
-                            <MetricTooltip text={`${typeNames[type] || type}类型问题的平均相关性得分。得分越高，表示该类型问题的答案质量越好。`} />
-                          </div>
-                          <div className="metric-value">
-                            {score.toFixed(2)}%
-                          </div>
-                          <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
-                            {count || 0} 个问题
-                          </div>
-                        </div>
-                      );
-                  })}
-            </div>
           </div>
-            )}
-
-            {/* 题目级 KPI 明细 */}
-            {perQuestionItems.length > 0 && (
-              <div className="dashboard-section" style={{ marginTop: "32px" }}>
-                <div className="section-header">
-                  <h3>题目级 KPI</h3>
-                  <p className="section-subtitle">查看每个问题的评测得分</p>
+            
+          {/* 相关性得分分布 - 卡片形式，同一层级 */}
+          {result.summary.ragas_relevancy_excellent_count !== undefined && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>相关性得分分布</h3>
+                <p className="section-subtitle">按得分等级统计</p>
+              </div>
+              <div className="dashboard-metrics">
+                <div className="metric-card apple-style">
+                  <div className="metric-label">
+                    优秀 (≥80%)
+                    <MetricTooltip text="答案相关性得分在80%以上的问题数量，表示答案与问题高度相关，用户满意度高。" />
+                  </div>
+                  <div className="metric-value">
+                    {result.summary.ragas_relevancy_excellent_count || 0}
+                  </div>
                 </div>
+                <div className="metric-card apple-style">
+                  <div className="metric-label">
+                    良好 (60-80%)
+                    <MetricTooltip text="答案相关性得分在60%-80%之间的问题数量，表示答案与问题相关，但仍有改进空间。" />
+                  </div>
+                  <div className="metric-value">
+                    {result.summary.ragas_relevancy_good_count || 0}
+                  </div>
+                </div>
+                <div className="metric-card apple-style">
+                  <div className="metric-label">
+                    一般 (40-60%)
+                    <MetricTooltip text="答案相关性得分在40%-60%之间的问题数量，表示答案与问题相关性一般，需要改进。" />
+                  </div>
+                  <div className="metric-value">
+                    {result.summary.ragas_relevancy_fair_count || 0}
+                  </div>
+                </div>
+                <div className="metric-card apple-style">
+                  <div className="metric-label">
+                    较差 (&lt;40%)
+                    <MetricTooltip text="答案相关性得分低于40%的问题数量，表示答案与问题相关性较差，需要重点关注和改进。" />
+                  </div>
+                  <div className="metric-value">
+                    {result.summary.ragas_relevancy_poor_count || 0}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+            
+          {/* 按问题类型的相关性得分 - 卡片形式，同一层级 */}
+          {result.summary.S1_relevancy_score_percentage !== undefined && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>按问题类型的相关性得分</h3>
+                <p className="section-subtitle">各类型问题的相关性表现</p>
+              </div>
+              <div className="dashboard-metrics">
+                {["S1", "S2", "S3", "S4", "S5", "S6"].map((type) => {
+                  const score = result.summary[`${type}_relevancy_score_percentage`];
+                  const count = result.summary[`${type}_count`];
+                  if (score === undefined) return null;
+                  
+                  const typeNames: Record<string, string> = {
+                    "S1": "数值问答",
+                    "S2": "定义问答",
+                    "S3": "多选题",
+                    "S4": "单文件多段",
+                    "S5": "多文件多段",
+                    "S6": "对抗数据/敏感信息"
+                  };
+                  
+                  return (
+                    <div key={type} className="metric-card apple-style">
+                      <div className="metric-label">
+                        {type}
+                        <MetricTooltip text={`${typeNames[type] || type}类型问题的平均相关性得分。得分越高，表示该类型问题的答案质量越好。`} />
+                      </div>
+                      <div className="metric-value">
+                        {score.toFixed(2)}%
+                      </div>
+                      <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
+                        {count || 0} 个问题
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 每题明细 - 同一层级 */}
+          {perQuestionItems.length > 0 && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>每题明细</h3>
+                <p className="section-subtitle">查看每个问题的详细评测得分</p>
+              </div>
                 <div className="csv-preview-controls" style={{ marginBottom: "12px" }}>
                   <label>
                     每页显示：
@@ -785,9 +760,8 @@ function Evaluation() {
                     </button>
                   </div>
                 )}
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>
