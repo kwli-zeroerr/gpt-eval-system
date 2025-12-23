@@ -324,7 +324,7 @@ def delete_log_files(log_file_path: str) -> Dict[str, bool]:
                         csv_file.unlink()
                         deleted_evaluation_files.append(str(csv_file))
                         logger.info(f"已删除评测 CSV 文件: {csv_file}")
-                        
+                
                         # 如果 CSV 文件在子目录中，记录目录以便后续删除
                         if csv_file.parent != evaluation_dir:
                             deleted_directories.append(csv_file.parent)
@@ -343,17 +343,21 @@ def delete_log_files(log_file_path: str) -> Dict[str, bool]:
                                 deleted_directories.append(json_file.parent)
                         else:
                             # 如果路径不匹配，尝试读取 JSON 内容检查
-                            with open(json_file, "r", encoding="utf-8") as f:
-                                summary_data = json.load(f)
-                                # 检查摘要中是否包含该 request_id
-                                if request_id_prefix in str(summary_data) or request_id in str(summary_data):
-                                    json_file.unlink()
-                                    deleted_evaluation_files.append(str(json_file))
-                                    logger.info(f"已删除评测摘要文件（通过内容匹配）: {json_file}")
-                                    
-                                    # 如果 JSON 文件在子目录中，记录目录以便后续删除
-                                    if json_file.parent != evaluation_dir:
-                                        deleted_directories.append(json_file.parent)
+                            try:
+                                with open(json_file, "r", encoding="utf-8") as f:
+                                    summary_data = json.load(f)
+                                    # 检查摘要中是否包含该 request_id
+                                    if request_id_prefix in str(summary_data) or request_id in str(summary_data):
+                                        json_file.unlink()
+                                        deleted_evaluation_files.append(str(json_file))
+                                        logger.info(f"已删除评测摘要文件（通过内容匹配）: {json_file}")
+                                        
+                                        # 如果 JSON 文件在子目录中，记录目录以便后续删除
+                                        if json_file.parent != evaluation_dir:
+                                            deleted_directories.append(json_file.parent)
+                            except Exception:
+                                # 如果读取失败，跳过该文件
+                                pass
                     except Exception:
                         continue
                 
