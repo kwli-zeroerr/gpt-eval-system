@@ -1,12 +1,32 @@
-# RAG 评测系统 - 运行指南
+# GPT 售后评测系统 - 运行指南
+
+## 系统概述
+
+本系统是一个**独立的 GPT 售后能力评测平台**，旨在衡量 GPT 售后部分面向用户的泛化能力，即评估 GPT 售后系统在面对不同用户、不同类型问题时的应答能力。
+
+### 核心目标
+
+- **泛化能力评测**：通过生成多样化的问题类型（S1-S6），全面评估 GPT 售后系统的应答能力
+- **独立运行**：系统完全隔离于原 GPT 生产环境，不影响原有系统的正常使用
+- **标准化流程**：基于相同的文档内容生成问题，采用相同的检索功能获取答案，确保评测的公平性和一致性
+- **多维度评估**：结合最先进的 Ragas AI 评测库（从 LLM 角度）和传统章节匹配指标，提供全面的质量评估
+
+### 系统特点
+
+- ✅ **完全隔离**：独立部署，不影响生产环境
+- ✅ **标准化评测**：使用相同的文档和检索逻辑，确保评测一致性
+- ✅ **先进评测技术**：集成 Ragas AI 评测库，从多个维度评估答案质量
+- ✅ **自动化流程**：支持一键运行完整评测流程（问题生成 → 格式转换 → 检索 → 评测）
+- ⚠️ **性能说明**：当前版本为单线程模式，速度较慢。在保障功能稳定后，将升级为多并发模式以提升性能
 
 ## 系统架构
 
-系统包含4个模块，形成完整的自动化评测流程：
-1. **问题生成模块** - 从6个维度（S1-S6）生成测试问题
-2. **格式转换模块** - 将问题日志转换为CSV格式
-3. **检索模块** - 批量调用 RagFlow API 检索获取答案
-4. **评测模块** - 使用章节匹配和 Ragas AI 评估答案质量
+系统包含4个核心模块，形成完整的自动化评测流程：
+
+1. **问题生成模块** - 从6个维度（S1-S6）生成多样化的测试问题
+2. **格式转换模块** - 将问题日志转换为标准 CSV 格式
+3. **检索模块** - 批量调用 RagFlow API，使用与生产环境相同的检索逻辑获取答案
+4. **评测模块** - 使用章节匹配（传统指标）和 Ragas AI（LLM 角度）进行多维度评估
 
 ### 数据流程
 
@@ -226,6 +246,13 @@ CSV格式包含以下列：
 - `GET /api/evaluation/result` - 获取评测结果详情
 - `GET /api/evaluation/latest-summary` - 获取最新评测摘要（用于概览页面）
 
+### RagFlow
+- `GET /api/ragflow/status` - 检查 RagFlow API 连接状态
+
+### 源文档和问题分析
+- `GET /api/source-documents` - 获取知识库文档统计信息
+- `GET /api/question-analysis` - 分析问题泛化性
+
 ### 完整流程
 - `WebSocket /ws/pipeline` - 一键运行完整流程（问题生成 → 格式转换 → 检索 → 评测）
 
@@ -251,7 +278,14 @@ gpt-eval-system/
 │   │   ├── format_convert_routes.py
 │   │   ├── retrieval_routes.py
 │   │   ├── evaluation_routes.py
-│   │   └── pipeline_routes.py
+│   │   ├── pipeline_routes.py
+│   │   └── ragflow_routes.py      # RagFlow API 路由
+│   ├── scripts/                    # 工具脚本
+│   │   ├── README.md              # 脚本使用指南
+│   │   ├── ragflow_import_from_segments.py  # 导入数据到 RagFlow
+│   │   ├── ragflow_cleanup.py     # 清理 RagFlow 数据集
+│   │   └── ...                    # 其他工具脚本
+│   ├── datasets.json              # RagFlow 数据集配置文件
 │   └── services/
 │       ├── generator.py            # 问题生成逻辑
 │       ├── llm_client.py          # LLM API 客户端
@@ -268,6 +302,8 @@ gpt-eval-system/
 └── frontend/
     ├── src/
     │   ├── Index.tsx              # 主页面（概览 + 模块导航）
+    │   ├── contexts/
+    │   │   └── ModuleStateContext.tsx  # 模块状态管理上下文
     │   ├── modules/
     │   │   ├── QuestionGen.tsx    # 问题生成模块
     │   │   ├── FormatConvert.tsx  # 格式转换模块
@@ -277,28 +313,42 @@ gpt-eval-system/
     └── package.json
 ```
 
+## 系统工作流程
+
+1. **问题生成**：基于 MinIO 知识库中的文档，从 6 个维度（S1-S6）自动生成多样化的问题
+2. **格式转换**：将生成的问题日志转换为标准 CSV 格式，便于后续处理
+3. **答案检索**：使用与生产环境相同的 RagFlow API 检索逻辑，获取 GPT 对每个问题的答案
+4. **质量评测**：
+   - **Ragas AI 评测**：从 LLM 角度评估答案的相关性、质量和忠实度
+   - **章节匹配**：基于传统指标评估答案的章节匹配准确率和召回率
+   - **混合评测**：综合两种评测方式，提供全面的质量评估报告
+
 ## 注意事项
 
 1. **环境变量**：确保 `.env` 文件配置正确，特别是：
    - `OPENAI_API_KEY` - 用于问题生成和 Ragas 评测
    - `OPENAI_BASE_URL` 和 `OPENAI_MODEL` - LLM 配置
    - `RAGFLOW_API_URL` 和 `RAGFLOW_API_KEY` - RagFlow API 配置
-   - `RAGFLOW_DATASETS_JSON` - 数据集配置文件路径（可选）
+   - `RAGFLOW_DATASETS_JSON` - 数据集配置文件路径（可选，默认为 `backend/datasets.json`）
    - MinIO 配置 - 用于问题生成时的知识库访问
 
-2. **MinIO 连接**：确保 MinIO 服务运行且 `knowledge` 桶中有文档
+2. **datasets.json**：RagFlow 数据集配置文件，位于 `backend/datasets.json`。该文件由脚本自动维护，包含当前 API key 有权限的所有数据集和文档映射。如需手动管理，请参考 `backend/scripts/README.md`。
 
-3. **RagFlow API**：确保 RagFlow 服务可访问，且已配置数据集
+3. **MinIO 连接**：确保 MinIO 服务运行且 `knowledge` 桶中有文档
 
-4. **端口冲突**：如果 8180 或 5173 端口被占用，需要修改配置
+4. **RagFlow API**：确保 RagFlow 服务可访问，且已配置数据集。可以使用 `backend/scripts/` 目录下的脚本管理 RagFlow 数据集（详见 `backend/scripts/README.md`）。
 
-5. **数据目录**：所有数据文件保存在 `backend/data/` 目录下，按模块分类存储
+5. **端口冲突**：如果 8180 或 5173 端口被占用，需要修改配置
 
-6. **文件对齐**：所有文件使用统一的命名规则（包含 `request_id[:8]` 前缀），确保删除功能能正确匹配所有关联文件
+6. **数据目录**：所有数据文件保存在 `backend/data/` 目录下，按模块分类存储
 
-7. **Python 版本**：推荐 Python 3.8+
+7. **文件对齐**：所有文件使用统一的命名规则（包含 `request_id[:8]` 前缀），确保删除功能能正确匹配所有关联文件
 
-8. **Node.js 版本**：推荐 Node.js 16+
+8. **Python 版本**：推荐 Python 3.8+
+
+9. **Node.js 版本**：推荐 Node.js 16+
+
+10. **性能优化**：当前版本为单线程模式，评测速度较慢。大规模评测时请耐心等待，后续版本将支持多并发处理。
 
 ## 故障排除
 

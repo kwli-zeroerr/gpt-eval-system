@@ -1,0 +1,23 @@
+{
+  "description": "数据集名称映射规则：将源文件名（source_file）映射到统一的数据集名称（dataset_name）",
+  "mappings": [
+    {
+      "pattern": "eCoder编码器用户手册",
+      "dataset_name": "eCoder 用户手册"
+    },
+    {
+      "pattern": "eRob机器人关节模组用户手册",
+      "dataset_name": "eRob 关节模组用户手册"
+    },
+    {
+      "pattern": "eRob CANopen and EtherCAT用户手册",
+      "dataset_name": "eRob CANopen & EtherCAT 用户手册"
+    },
+    {
+      "pattern": "eRob机器人关节Modbus-RTU通信应用手册",
+      "dataset_name": "eRob Modbus-RTU 应用手册"
+    }
+  ],
+  "default_behavior": "如果源文件名不匹配任何规则，则使用原始文件名作为数据集名称"
+}
+
