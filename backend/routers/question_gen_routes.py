@@ -224,11 +224,15 @@ async def generate_with_progress(req: GenerateRequest, websocket: WebSocket):
     """Generate questions with fine-grained progress updates via WebSocket."""
     category_questions_map: Dict[str, List[QuestionItem]] = {}
 
-    async def progress_callback(cat: str, current: int, total: int, elapsed: float | None = None):
+    async def progress_callback(cat: str, current: int, total: int, elapsed: float | None = None, active_categories: List[str] | None = None):
+        # Handle both old signature (without active_categories) and new signature
+        if active_categories is None:
+            active_categories = [cat] if cat else []
         await websocket.send_json(
             {
                 "type": "progress",
-                "category": cat,
+                "category": cat,  # Keep for backward compatibility
+                "activeCategories": active_categories,  # Support multiple concurrent categories
                 "current": current,
                 "total": total,
                 "percentage": int((current / total) * 100),
@@ -309,20 +313,33 @@ async def generate_with_progress(req: GenerateRequest, websocket: WebSocket):
 @router.websocket("/ws/generate")
 async def websocket_generate(websocket: WebSocket):
     """WebSocket endpoint for generating questions with real-time progress."""
+    logger.info("WebSocket connection attempt to /ws/generate")
     await websocket.accept()
+    logger.info("WebSocket connection accepted")
     try:
         data = await websocket.receive_text()
+        logger.info("Received WebSocket data: %s", data[:200] if len(data) > 200 else data)
         req_data = json.loads(data)
         req = GenerateRequest(**req_data)
+        logger.info(
+            "Starting question generation: categories=%s, per_category=%s",
+            req.categories,
+            req.per_category,
+        )
         await generate_with_progress(req, websocket)
+        logger.info("Question generation completed successfully")
     except WebSocketDisconnect:
         # Client disconnected during generation
-        pass
+        logger.info("WebSocket disconnected by client")
     except Exception as exc:  # noqa: BLE001
+        error_msg = str(exc)
+        error_trace = traceback.format_exc()
+        logger.error("WebSocket error: %s\n%s", error_msg, error_trace)
         try:
-            await websocket.send_json({"type": "error", "message": str(exc)})
+            await websocket.send_json({"type": "error", "message": error_msg})
         except Exception:  # noqa: BLE001
             # If sending fails there's nothing more we can do
+            logger.error("Failed to send error message to WebSocket client")
             pass
 
 

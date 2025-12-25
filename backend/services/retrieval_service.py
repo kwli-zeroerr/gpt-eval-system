@@ -2,6 +2,7 @@
 检索服务 - 从 CSV 读取问题，调用 RagFlow API 获取答案，填充到 CSV
 """
 import csv
+import json
 import logging
 import os
 import sys
@@ -9,7 +10,8 @@ from pathlib import Path
 from typing import List, Dict, Optional, Callable, Awaitable
 from dataclasses import dataclass
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import time
 import threading
 from config.paths import DATA_RETRIEVAL_DIR
@@ -33,6 +35,26 @@ class TestCase:
     type: Optional[str] = None
     theme: Optional[str] = None
     retrieved_context: str = ""  # 检索到的上下文（用于Ragas评测）
+    retrieved_chunks_json: str = ""  # 检索到的完整chunks列表（JSON格式，用于召回率@K计算）
+    retrieval_time: float = 0.0  # 检索响应时间（秒）
+    generation_time: float = 0.0  # 生成响应时间（秒）
+    total_time: float = 0.0  # 总响应时间（秒）
+    
+    def to_dict(self) -> Dict:
+        """转换为字典，用于序列化（多进程）"""
+        return {
+            "question": self.question,
+            "answer": self.answer,
+            "answer_chapter": self.answer_chapter,
+            "reference": self.reference,
+            "type": self.type,
+            "theme": self.theme,
+            "retrieved_context": self.retrieved_context,
+            "retrieved_chunks_json": self.retrieved_chunks_json,
+            "retrieval_time": self.retrieval_time,
+            "generation_time": self.generation_time,
+            "total_time": self.total_time,
+        }
 
 
 def load_test_cases_from_csv(csv_path: str) -> List[TestCase]:
@@ -46,6 +68,12 @@ def load_test_cases_from_csv(csv_path: str) -> List[TestCase]:
             answer = row.get("answer", "").strip()
             answer_chapter = row.get("answer_chapter", "").strip()
             retrieved_context = row.get("retrieved_context", "").strip()
+            retrieved_chunks_json = row.get("retrieved_chunks_json", "").strip()
+            
+            # 解析性能指标（兼容旧格式）
+            retrieval_time = float(row.get("retrieval_time", "0") or "0")
+            generation_time = float(row.get("generation_time", "0") or "0")
+            total_time = float(row.get("total_time", "0") or "0")
             
             # 如果 answer_chapter 为空但 answer 不为空，尝试从 answer 提取章节
             if not answer_chapter and answer:
@@ -59,6 +87,10 @@ def load_test_cases_from_csv(csv_path: str) -> List[TestCase]:
                 type=row.get("type", "").strip() or None,
                 theme=row.get("theme", "").strip() or None,
                 retrieved_context=retrieved_context,  # 检索上下文
+                retrieved_chunks_json=retrieved_chunks_json,  # 完整chunks列表
+                retrieval_time=retrieval_time,
+                generation_time=generation_time,
+                total_time=total_time,
             ))
     
     logger.info(f"加载测试用例: {len(test_cases)} 条")
@@ -69,8 +101,12 @@ def save_test_cases_to_csv(test_cases: List[TestCase], csv_path: str):
     """将测试用例保存到 CSV 文件"""
     with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-        # 更新 CSV 格式：添加 answer_chapter 和 retrieved_context 字段
-        writer.writerow(["question", "answer", "answer_chapter", "reference", "type", "theme", "retrieved_context"])
+        # 更新 CSV 格式：添加新字段
+        writer.writerow([
+            "question", "answer", "answer_chapter", "reference", "type", "theme", 
+            "retrieved_context", "retrieved_chunks_json",
+            "retrieval_time", "generation_time", "total_time"
+        ])
         
         for tc in test_cases:
             writer.writerow([
@@ -81,9 +117,68 @@ def save_test_cases_to_csv(test_cases: List[TestCase], csv_path: str):
                 tc.type or "",
                 tc.theme or "",
                 tc.retrieved_context or "",  # 检索上下文
+                tc.retrieved_chunks_json or "",  # 完整chunks列表（JSON格式）
+                f"{tc.retrieval_time:.3f}",  # 检索时间
+                f"{tc.generation_time:.3f}",  # 生成时间
+                f"{tc.total_time:.3f}",  # 总时间
             ])
     
     logger.debug(f"测试用例已保存到 CSV: {csv_path}")
+
+
+def save_retrieved_chunks_json(response: Dict) -> str:
+    """
+    从 RagFlow 检索响应中提取完整的chunks列表并保存为JSON字符串
+    
+    Args:
+        response: RagFlow 检索 API 响应
+    
+    Returns:
+        JSON格式的chunks列表字符串
+    """
+    if "error" in response or response.get('code') != 0:
+        return ""
+    
+    data = response.get('data', {})
+    chunks = data.get('chunks', []) if isinstance(data, dict) else []
+    
+    if not chunks:
+        return ""
+    
+    # 基于相似度排序（保持与assemble_retrieved_context一致的排序逻辑）
+    def get_similarity_score(chunk: Dict) -> Optional[float]:
+        if isinstance(chunk, dict):
+            if isinstance(chunk.get('similarity'), (int, float)):
+                return float(chunk['similarity'])
+            if isinstance(chunk.get('score'), (int, float)):
+                return float(chunk['score'])
+            if isinstance(chunk.get('relevance'), (int, float)):
+                return float(chunk['relevance'])
+            if isinstance(chunk.get('distance'), (int, float)):
+                return -float(chunk['distance'])
+        return None
+    
+    # 排序chunks（按相似度降序）
+    sorted_chunks = sorted(chunks, key=lambda c: get_similarity_score(c) or float('-inf'), reverse=True)
+    
+    # 只保存必要的字段，避免JSON过大
+    simplified_chunks = []
+    for chunk in sorted_chunks:
+        simplified = {
+            'content': chunk.get('content', ''),
+            'metadata': chunk.get('metadata', {}),
+            'similarity': get_similarity_score(chunk),
+        }
+        # 保留important_keywords（可能包含章节信息）
+        if 'important_keywords' in chunk:
+            simplified['important_keywords'] = chunk.get('important_keywords', [])
+        simplified_chunks.append(simplified)
+    
+    try:
+        return json.dumps(simplified_chunks, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"序列化chunks失败: {e}")
+        return ""
 
 
 def assemble_retrieved_context(response: Dict, top_k: int = 3) -> str:
@@ -200,6 +295,173 @@ def extract_answer_from_response(response: Dict, theme: Optional[str] = None) ->
                         return chapter_info
     
     return ""
+
+
+def _process_single_case_worker(args):
+    """Worker function for ProcessPoolExecutor to process a single test case.
+    
+    This function must be pickleable (no closures, no lambda functions).
+    Each process will create its own RagFlowClient instance.
+    
+    Args:
+        args: tuple of (
+            idx, test_case_dict, ragflow_api_url, ragflow_api_key,
+            retrieval_config_dict, datasets_json_path, all_dataset_ids,
+            normal_chat_id, s6_chat_id
+        )
+    
+    Returns:
+        tuple of (idx, success, updated_test_case_dict)
+    """
+    (idx, test_case_dict, ragflow_api_url, ragflow_api_key,
+     retrieval_config_dict, datasets_json_path, all_dataset_ids,
+     normal_chat_id, s6_chat_id) = args
+    
+    # Create RagFlowClient in this process
+    client = RagFlowClient(ragflow_api_url, ragflow_api_key)
+    config = RetrievalConfig.from_dict(retrieval_config_dict)
+    
+    # Reconstruct TestCase from dict
+    test_case = TestCase(
+        question=test_case_dict.get("question", ""),
+        answer=test_case_dict.get("answer", ""),
+        answer_chapter=test_case_dict.get("answer_chapter", ""),
+        reference=test_case_dict.get("reference", ""),
+        type=test_case_dict.get("type", ""),
+        theme=test_case_dict.get("theme", ""),
+        retrieved_context=test_case_dict.get("retrieved_context", ""),
+        retrieved_chunks_json=test_case_dict.get("retrieved_chunks_json", ""),
+        retrieval_time=test_case_dict.get("retrieval_time", 0.0),
+        generation_time=test_case_dict.get("generation_time", 0.0),
+        total_time=test_case_dict.get("total_time", 0.0),
+    )
+    
+    try:
+        # 如果答案已存在，跳过
+        if test_case.answer:
+            return (idx, True, test_case.to_dict())
+        
+        # 根据问题类型选择对应的 assistant
+        is_s6 = test_case.type and "S6" in test_case.type
+        current_chat_id = s6_chat_id if is_s6 else normal_chat_id
+        
+        if current_chat_id:
+            # 根据 theme 确定 dataset_id
+            dataset_id = None
+            if test_case.theme:
+                theme_datasets = client.get_datasets_by_theme(test_case.theme, datasets_json_path)
+                if theme_datasets:
+                    dataset_id = theme_datasets[0].get("id")
+            
+            # 如果没有找到 dataset_id，使用第一个可用的 dataset
+            if not dataset_id and all_dataset_ids:
+                dataset_id = all_dataset_ids[0]
+            
+            if dataset_id:
+                # 创建 session（每个进程独立创建，不需要共享）
+                session_name = f"Session-{dataset_id[:8]}-{'s6' if is_s6 else 'normal'}"
+                session_id = client.create_session(current_chat_id, session_name)
+                
+                if session_id:
+                    # 调用检索 API
+                    retrieval_start_time = time.time()
+                    retrieval_response = client.search(
+                        test_case.question,
+                        test_case.theme,
+                        config,
+                        datasets_json_path=datasets_json_path,
+                    )
+                    retrieval_time = time.time() - retrieval_start_time
+                    test_case.retrieval_time = retrieval_time
+                    
+                    # 保存完整的chunks列表
+                    if retrieval_response.get('code') == 0:
+                        test_case.retrieved_chunks_json = save_retrieved_chunks_json(retrieval_response)
+                        test_case.retrieved_context = assemble_retrieved_context(retrieval_response, top_k=3)
+                    else:
+                        test_case.retrieved_chunks_json = ""
+                        test_case.retrieved_context = ""
+                    
+                    # 使用 completion API 生成完整答案
+                    generation_start_time = time.time()
+                    answer_text = client.chat_completion(
+                        chat_id=current_chat_id,
+                        question=test_case.question,
+                        stream=False,
+                        reference=False,
+                    )
+                    generation_time = time.time() - generation_start_time
+                    test_case.generation_time = generation_time
+                    test_case.total_time = retrieval_time + generation_time
+                    
+                    if answer_text:
+                        test_case.answer = answer_text.strip()
+                        test_case.answer_chapter = ChapterMatcher.extract_chapter_info(test_case.answer) or ""
+                    else:
+                        test_case.answer = ""
+                        test_case.answer_chapter = ""
+                    
+                    # 清理 session
+                    try:
+                        client.delete_session(current_chat_id, session_id)
+                    except:
+                        pass
+                else:
+                    test_case.answer = ""
+                    test_case.answer_chapter = ""
+                    test_case.retrieved_context = ""
+                    test_case.retrieved_chunks_json = ""
+                    test_case.retrieval_time = 0.0
+                    test_case.generation_time = 0.0
+                    test_case.total_time = 0.0
+                    return (idx, False, test_case.to_dict())
+            else:
+                test_case.answer = ""
+                test_case.answer_chapter = ""
+                test_case.retrieved_context = ""
+                test_case.retrieved_chunks_json = ""
+                test_case.retrieval_time = 0.0
+                test_case.generation_time = 0.0
+                test_case.total_time = 0.0
+                return (idx, False, test_case.to_dict())
+        else:
+            # 回退到检索模式
+            retrieval_start_time = time.time()
+            response = client.search(
+                test_case.question,
+                test_case.theme,
+                config,
+                datasets_json_path=datasets_json_path,
+            )
+            retrieval_time = time.time() - retrieval_start_time
+            test_case.retrieval_time = retrieval_time
+            test_case.generation_time = 0.0
+            test_case.total_time = retrieval_time
+            
+            if "error" in response or response.get('code') != 0:
+                test_case.answer = ""
+                test_case.answer_chapter = ""
+                test_case.retrieved_context = ""
+                test_case.retrieved_chunks_json = ""
+            else:
+                test_case.retrieved_chunks_json = save_retrieved_chunks_json(response)
+                test_case.retrieved_context = assemble_retrieved_context(response, top_k=3)
+                answer_chapter = extract_answer_from_response(response, test_case.theme)
+                test_case.answer_chapter = answer_chapter
+                test_case.answer = answer_chapter
+        
+        return (idx, True, test_case.to_dict())
+        
+    except Exception as e:
+        logger.error(f"[检索 {idx}] 失败: {test_case.question[:50]}... - {str(e)}", exc_info=True)
+        test_case.answer = ""
+        test_case.answer_chapter = ""
+        test_case.retrieved_context = ""
+        test_case.retrieved_chunks_json = ""
+        test_case.retrieval_time = 0.0
+        test_case.generation_time = 0.0
+        test_case.total_time = 0.0
+        return (idx, False, test_case.to_dict())
 
 
 async def run_retrieval(
@@ -430,6 +692,10 @@ async def run_retrieval(
                             test_case.answer = ""
                             test_case.answer_chapter = ""
                             test_case.retrieved_context = ""
+                            test_case.retrieved_chunks_json = ""
+                            test_case.retrieval_time = 0.0
+                            test_case.generation_time = 0.0
+                            test_case.total_time = 0.0
                             with counter_lock:
                                 failed += 1
                             return False
@@ -437,26 +703,35 @@ async def run_retrieval(
                         chat_id_for_question, session_id = session_result
                         
                         # 先调用检索 API 获取上下文（用于后续评测）
+                        retrieval_start_time = time.time()
                         retrieval_response = client.search(
                             test_case.question,
                             test_case.theme,
                             config,
                             datasets_json_path=datasets_json_path,
                         )
+                        retrieval_time = time.time() - retrieval_start_time
+                        test_case.retrieval_time = retrieval_time
                         
-                        # 组装检索上下文
+                        # 保存完整的chunks列表（用于召回率@K计算）
                         if retrieval_response.get('code') == 0:
+                            test_case.retrieved_chunks_json = save_retrieved_chunks_json(retrieval_response)
                             test_case.retrieved_context = assemble_retrieved_context(retrieval_response, top_k=3)
                         else:
+                            test_case.retrieved_chunks_json = ""
                             test_case.retrieved_context = ""
                             logger.debug(f"[{idx}/{total}] 检索 API 返回错误，无法获取上下文")
                         
                         # 使用 completion API 生成完整答案（带重试）
+                        generation_start_time = time.time()
                         answer_text = chat_completion_with_retry(
                             chat_id_for_question,
                             test_case.question,
                             test_case.type
                         )
+                        generation_time = time.time() - generation_start_time
+                        test_case.generation_time = generation_time
+                        test_case.total_time = retrieval_time + generation_time
                         
                         if answer_text:
                             test_case.answer = answer_text
@@ -477,14 +752,23 @@ async def run_retrieval(
                         test_case.answer = ""
                         test_case.answer_chapter = ""
                         test_case.retrieved_context = ""
+                        test_case.retrieved_chunks_json = ""
+                        test_case.retrieval_time = 0.0
+                        test_case.generation_time = 0.0
+                        test_case.total_time = 0.0
                 else:
                     # 回退到检索模式（提取章节号）
+                    retrieval_start_time = time.time()
                     response = client.search(
                         test_case.question,
                         test_case.theme,
                         config,
                         datasets_json_path=datasets_json_path,
                     )
+                    retrieval_time = time.time() - retrieval_start_time
+                    test_case.retrieval_time = retrieval_time
+                    test_case.generation_time = 0.0  # 检索模式没有生成步骤
+                    test_case.total_time = retrieval_time
                     
                     # 检查是否有错误
                     if "error" in response or response.get('code') != 0:
@@ -493,7 +777,10 @@ async def run_retrieval(
                         test_case.answer = ""
                         test_case.answer_chapter = ""
                         test_case.retrieved_context = ""
+                        test_case.retrieved_chunks_json = ""
                     else:
+                        # 保存完整的chunks列表
+                        test_case.retrieved_chunks_json = save_retrieved_chunks_json(response)
                         # 组装检索上下文
                         test_case.retrieved_context = assemble_retrieved_context(response, top_k=3)
                         
@@ -518,6 +805,10 @@ async def run_retrieval(
                 test_case.answer = ""
                 test_case.answer_chapter = ""
                 test_case.retrieved_context = ""
+                test_case.retrieved_chunks_json = ""
+                test_case.retrieval_time = 0.0
+                test_case.generation_time = 0.0
+                test_case.total_time = 0.0
                 raise  # 重新抛出异常，让外层捕获
             
             with counter_lock:
@@ -529,37 +820,80 @@ async def run_retrieval(
             test_case.answer = ""
             test_case.answer_chapter = ""
             test_case.retrieved_context = ""
+            test_case.retrieved_chunks_json = ""
+            test_case.retrieval_time = 0.0
+            test_case.generation_time = 0.0
+            test_case.total_time = 0.0
             with counter_lock:
                 failed += 1
             return False
     
-    # 执行检索（支持并发）
-    if max_workers > 1:
-        logger.info(f"使用并发模式检索，并发数: {max_workers}")
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = []
-            for idx, test_case in enumerate(test_cases, 1):
-                future = executor.submit(process_single_case, idx, test_case)
-                futures.append((idx, future))
-                
-                # 发送进度更新
-                if progress_callback:
-                    asyncio.create_task(progress_callback(
-                        idx - 1,
-                        total,
-                        {"status": "processing", "current": idx, "total": total}
-                    ))
-                
-                # 延迟以避免限流
-                if delay_between_requests > 0:
-                    time.sleep(delay_between_requests)
+    # 执行检索（支持多进程并发）
+    # 使用 ProcessPoolExecutor 而不是 ThreadPoolExecutor 以充分利用多核心
+    MAX_PROCESSES = int(os.getenv('MAX_PROCESSES', max(4, multiprocessing.cpu_count() or 4)))
+    effective_max_workers = min(max_workers, MAX_PROCESSES) if max_workers > 1 else 1
+    
+    if effective_max_workers > 1:
+        logger.info(f"使用多进程并发模式检索，进程数: {effective_max_workers}")
+        
+        # 准备可序列化的任务参数
+        tasks = []
+        for idx, test_case in enumerate(test_cases, 1):
+            task_args = (
+                idx,
+                test_case.to_dict(),
+                ragflow_api_url,
+                ragflow_api_key,
+                retrieval_config,
+                datasets_json_path,
+                all_dataset_ids,
+                normal_chat_id,
+                s6_chat_id,
+            )
+            tasks.append(task_args)
+        
+        # 使用 ProcessPoolExecutor 并发执行
+        loop = asyncio.get_event_loop()
+        with ProcessPoolExecutor(max_workers=effective_max_workers) as executor:
+            futures = {executor.submit(_process_single_case_worker, task): task[0] 
+                      for task in tasks}
             
-            # 等待所有任务完成
-            for idx, future in futures:
+            # 收集结果并更新 test_cases
+            results = {}
+            for future in as_completed(futures):
+                idx = futures[future]
                 try:
-                    future.result()
+                    result_idx, success, updated_dict = future.result()
+                    # 更新对应的 test_case
+                    test_case = test_cases[result_idx - 1]
+                    test_case.answer = updated_dict.get("answer", "")
+                    test_case.answer_chapter = updated_dict.get("answer_chapter", "")
+                    test_case.retrieved_context = updated_dict.get("retrieved_context", "")
+                    test_case.retrieved_chunks_json = updated_dict.get("retrieved_chunks_json", "")
+                    test_case.retrieval_time = updated_dict.get("retrieval_time", 0.0)
+                    test_case.generation_time = updated_dict.get("generation_time", 0.0)
+                    test_case.total_time = updated_dict.get("total_time", 0.0)
+                    
+                    with counter_lock:
+                        if success:
+                            completed += 1
+                        else:
+                            failed += 1
+                    
+                    # 发送进度更新
+                    if progress_callback:
+                        try:
+                            await progress_callback(
+                                result_idx - 1,
+                                total,
+                                {"status": "processing", "current": result_idx, "total": total}
+                            )
+                        except Exception as e:
+                            logger.warning(f"Progress callback error: {e}")
                 except Exception as e:
                     logger.error(f"任务 {idx} 执行异常: {str(e)}")
+                    with counter_lock:
+                        failed += 1
     else:
         logger.debug("使用顺序模式检索")
         for idx, test_case in enumerate(test_cases, 1):

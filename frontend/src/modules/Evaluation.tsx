@@ -59,6 +59,40 @@ interface EvaluationResult {
     recall?: number;
     accuracy_percentage?: number;
     recall_percentage?: number;
+    // 检索优化指标
+    recall_at_3?: number;
+    recall_at_3_percentage?: number;
+    recall_at_5?: number;
+    recall_at_5_percentage?: number;
+    recall_at_10?: number;
+    recall_at_10_percentage?: number;
+    // 性能指标
+    avg_retrieval_time?: number;
+    p50_retrieval_time?: number;
+    p95_retrieval_time?: number;
+    avg_generation_time?: number;
+    p50_generation_time?: number;
+    p95_generation_time?: number;
+    avg_total_time?: number;
+    p50_total_time?: number;
+    p95_total_time?: number;
+    concurrent_10_avg_time?: number;
+    // 泛化性指标
+    generalization_score?: number;
+    generalization_score_percentage?: number;
+    S1_avg_score?: number;
+    S2_avg_score?: number;
+    S3_avg_score?: number;
+    S4_avg_score?: number;
+    S5_avg_score?: number;
+    S6_avg_score?: number;
+    // 优化建议
+    optimization_suggestions?: Array<{
+      category: string;
+      metric: string;
+      current_value: string;
+      suggestion: string;
+    }>;
   };
   total_questions: number;
   total_time: number;
@@ -577,6 +611,241 @@ function Evaluation() {
               </div>
             )}
           </div>
+          
+          {/* 检索优化指标 */}
+          {(result.summary.recall_at_3 !== undefined || result.summary.recall_at_5 !== undefined || result.summary.recall_at_10 !== undefined) && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>检索优化指标</h3>
+                <p className="section-subtitle">用于优化检索系统（嵌入模型、检索策略）</p>
+              </div>
+              <div className="dashboard-metrics">
+                {result.summary.recall_at_3 !== undefined && (
+                  <div className="metric-card apple-style" style={{ border: "2px solid #34C759", background: "linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)" }}>
+                    <div className="metric-label">
+                      召回率@3
+                      <MetricTooltip text="前3个检索结果中包含正确答案的比例。用于评估检索系统的精确性，值越高表示检索越精准。" />
+                    </div>
+                    <div className="metric-value" style={{ color: "#34C759" }}>
+                      {formatScore(result.summary.recall_at_3)}
+                    </div>
+                  </div>
+                )}
+                {result.summary.recall_at_5 !== undefined && (
+                  <div className="metric-card apple-style" style={{ border: "2px solid #34C759", background: "linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)" }}>
+                    <div className="metric-label">
+                      召回率@5
+                      <MetricTooltip text="前5个检索结果中包含正确答案的比例。用于评估检索系统的召回能力，值越高表示检索覆盖越全面。" />
+                    </div>
+                    <div className="metric-value" style={{ color: "#34C759" }}>
+                      {formatScore(result.summary.recall_at_5)}
+                    </div>
+                  </div>
+                )}
+                {result.summary.recall_at_10 !== undefined && (
+                  <div className="metric-card apple-style" style={{ border: "2px solid #34C759", background: "linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)" }}>
+                    <div className="metric-label">
+                      召回率@10
+                      <MetricTooltip text="前10个检索结果中包含正确答案的比例。用于评估检索系统的整体召回能力，是检索优化的关键指标。" />
+                    </div>
+                    <div className="metric-value" style={{ color: "#34C759" }}>
+                      {formatScore(result.summary.recall_at_10)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* 提示词优化指标 */}
+          {(result.summary.ragas_relevancy_score !== undefined || result.summary.ragas_quality_score !== undefined) && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>提示词优化指标</h3>
+                <p className="section-subtitle">用于优化提示词工程</p>
+              </div>
+              <div className="dashboard-metrics">
+                {result.summary.ragas_relevancy_score !== undefined && (
+                  <div className="metric-card apple-style" style={{ border: "2px solid #FF9500", background: "linear-gradient(135deg, #fff7ed 0%, #ffffff 100%)" }}>
+                    <div className="metric-label">
+                      相关性得分
+                      <MetricTooltip text="答案与问题的相关程度，用于评估提示词是否能够引导模型生成相关答案。得分低时建议优化提示词。" />
+                    </div>
+                    <div className="metric-value" style={{ color: "#FF9500" }}>
+                      {formatScore(result.summary.ragas_relevancy_score)}
+                    </div>
+                  </div>
+                )}
+                {result.summary.ragas_quality_score !== undefined && (
+                  <div className="metric-card apple-style" style={{ border: "2px solid #FF9500", background: "linear-gradient(135deg, #fff7ed 0%, #ffffff 100%)" }}>
+                    <div className="metric-label">
+                      答案质量得分
+                      <MetricTooltip text="答案的准确性、完整性和一致性，用于评估提示词是否能够引导模型生成高质量答案。得分低时建议优化提示词。" />
+                    </div>
+                    <div className="metric-value" style={{ color: "#FF9500" }}>
+                      {formatScore(result.summary.ragas_quality_score)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* 系统性能指标 */}
+          {(result.summary.avg_retrieval_time !== undefined || result.summary.avg_generation_time !== undefined || result.summary.avg_total_time !== undefined) && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>系统性能指标</h3>
+                <p className="section-subtitle">响应时间和并发性能</p>
+              </div>
+              <div className="dashboard-metrics">
+                {result.summary.avg_retrieval_time !== undefined && (
+                  <div className="metric-card apple-style">
+                    <div className="metric-label">
+                      平均检索时间
+                      <MetricTooltip text="单次检索API调用的平均耗时（秒），反映检索系统的响应速度。" />
+                    </div>
+                    <div className="metric-value">
+                      {result.summary.avg_retrieval_time.toFixed(3)}s
+                    </div>
+                    {result.summary.p95_retrieval_time !== undefined && (
+                      <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
+                        P95: {result.summary.p95_retrieval_time.toFixed(3)}s
+                      </div>
+                    )}
+                  </div>
+                )}
+                {result.summary.avg_generation_time !== undefined && (
+                  <div className="metric-card apple-style">
+                    <div className="metric-label">
+                      平均生成时间
+                      <MetricTooltip text="Completion API调用的平均耗时（秒），反映生成系统的响应速度。" />
+                    </div>
+                    <div className="metric-value">
+                      {result.summary.avg_generation_time.toFixed(3)}s
+                    </div>
+                    {result.summary.p95_generation_time !== undefined && (
+                      <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
+                        P95: {result.summary.p95_generation_time.toFixed(3)}s
+                      </div>
+                    )}
+                  </div>
+                )}
+                {result.summary.avg_total_time !== undefined && (
+                  <div className="metric-card apple-style">
+                    <div className="metric-label">
+                      平均总响应时间
+                      <MetricTooltip text="检索+生成的总平均耗时（秒），反映系统整体响应速度。" />
+                    </div>
+                    <div className="metric-value">
+                      {result.summary.avg_total_time.toFixed(3)}s
+                    </div>
+                    {result.summary.p95_total_time !== undefined && (
+                      <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
+                        P95: {result.summary.p95_total_time.toFixed(3)}s
+                      </div>
+                    )}
+                    {result.summary.concurrent_10_avg_time !== undefined && (
+                      <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
+                        并发10条: {result.summary.concurrent_10_avg_time.toFixed(3)}s
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* 泛化性分析 */}
+          {result.summary.generalization_score !== undefined && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>泛化性分析</h3>
+                <p className="section-subtitle">系统对不同类型问题的处理能力均衡度</p>
+              </div>
+              <div className="dashboard-metrics">
+                <div className="metric-card apple-style" style={{ border: "2px solid #AF52DE", background: "linear-gradient(135deg, #faf5ff 0%, #ffffff 100%)" }}>
+                  <div className="metric-label">
+                    泛化性得分
+                    <MetricTooltip text="评估系统对不同类型问题（S1-S6）的处理能力均衡度。得分越高，说明系统对各种问题的处理能力越均衡，泛化能力越强。" />
+                  </div>
+                  <div className="metric-value" style={{ color: "#AF52DE" }}>
+                    {formatScore(result.summary.generalization_score)}
+                  </div>
+                </div>
+                {/* 各类型问题得分 */}
+                {["S1", "S2", "S3", "S4", "S5", "S6"].map((type) => {
+                  const avgScore = result.summary[`${type}_avg_score`];
+                  if (avgScore === undefined) return null;
+                  
+                  const typeNames: Record<string, string> = {
+                    "S1": "数值问答",
+                    "S2": "定义问答",
+                    "S3": "多选题",
+                    "S4": "单文件多段",
+                    "S5": "多文件多段",
+                    "S6": "对抗数据/敏感信息"
+                  };
+                  
+                  return (
+                    <div key={type} className="metric-card apple-style">
+                      <div className="metric-label">
+                        {type} 平均得分
+                        <MetricTooltip text={`${typeNames[type] || type}类型问题的平均得分`} />
+                      </div>
+                      <div className="metric-value">
+                        {formatScore(avgScore)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          
+          {/* 优化建议 */}
+          {result.summary.optimization_suggestions && result.summary.optimization_suggestions.length > 0 && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>优化建议</h3>
+                <p className="section-subtitle">根据评测结果自动生成的优化建议</p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {result.summary.optimization_suggestions.map((suggestion: any, idx: number) => (
+                  <div key={idx} className="alert" style={{ 
+                    backgroundColor: suggestion.category === "提示词优化" ? "#fff7ed" : 
+                                    suggestion.category === "检索优化" ? "#f0fdf4" : "#faf5ff",
+                    border: `1px solid ${suggestion.category === "提示词优化" ? "#FF9500" : 
+                                          suggestion.category === "检索优化" ? "#34C759" : "#AF52DE"}`,
+                    padding: "16px",
+                    borderRadius: "12px"
+                  }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                      <div style={{ 
+                        padding: "4px 8px", 
+                        borderRadius: "6px", 
+                        fontSize: "12px", 
+                        fontWeight: 600,
+                        backgroundColor: suggestion.category === "提示词优化" ? "#FF9500" : 
+                                        suggestion.category === "检索优化" ? "#34C759" : "#AF52DE",
+                        color: "white"
+                      }}>
+                        {suggestion.category}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                          {suggestion.metric}: {suggestion.current_value}
+                        </div>
+                        <div style={{ fontSize: "14px", opacity: 0.8 }}>
+                          {suggestion.suggestion}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
             
           {/* 相关性得分分布 - 卡片形式，同一层级 */}
           {result.summary.ragas_relevancy_excellent_count !== undefined && (

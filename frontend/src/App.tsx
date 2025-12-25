@@ -1,8 +1,71 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, memo, useCallback } from "react";
+import { List } from "react-window";
 import { fetchCategories, generateQuestions } from "./api";
 import { Category, QuestionItem } from "./types";
 
 type PromptMap = Record<string, string>;
+
+// Memoized Question Item Component for better performance
+const QuestionItemComponent = memo(({ 
+  question, 
+  index, 
+  refIndex 
+}: { 
+  question: QuestionItem; 
+  index: number; 
+  refIndex: number | null;
+}) => {
+  return (
+    <div className="question-item">
+      <span className="question-number">{index}.</span>
+      <div className="question-content">
+        <span className="question-text">
+          {question.text}
+          {refIndex && (
+            <sup className="reference-sup">{refIndex}</sup>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+});
+
+QuestionItemComponent.displayName = "QuestionItemComponent";
+
+// Virtual List Row Component
+const VirtualRow = memo(({ 
+  index, 
+  style, 
+  rowProps 
+}: { 
+  index: number; 
+  style: React.CSSProperties; 
+  rowProps: { 
+    questions: QuestionItem[]; 
+    startIdx: number; 
+    refMap: Map<string, number>;
+  };
+}) => {
+  const { questions, startIdx, refMap } = rowProps;
+  const question = questions[index];
+  if (!question) return null;
+  
+  const hasReference = question.reference && question.reference.trim();
+  const refIndex = hasReference && question.reference ? refMap.get(question.reference) || null : null;
+  const globalIdx = startIdx + index + 1;
+  
+  return (
+    <div style={style}>
+      <QuestionItemComponent 
+        question={question} 
+        index={globalIdx} 
+        refIndex={refIndex}
+      />
+    </div>
+  );
+});
+
+VirtualRow.displayName = "VirtualRow";
 
 function App() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -24,12 +87,14 @@ function App() {
   const [categoryTimes, setCategoryTimes] = useState<Record<string, number>>({});
   const [totalTime, setTotalTime] = useState<number | null>(null);
   const [categoryPages, setCategoryPages] = useState<Record<string, number>>({});
+  const [itemsPerPage, setItemsPerPage] = useState(50); // Increased from 10 to 50
   const [questionGenProgress, setQuestionGenProgress] = useState<{
-    currentCategory: string;
+    activeCategories: string[]; // Support multiple concurrent categories
     completedCategories: string[];
     totalCategories: number;
   } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const listRefs = useRef<Record<string, any>>({});
 
   useEffect(() => {
     fetchCategories()
@@ -71,7 +136,7 @@ function App() {
     return grouped;
   }, [results]);
 
-  // Filtered and searched results
+  // Filtered and searched results - optimized with useMemo
   const filteredResults = useMemo(() => {
     let filtered = results;
 
@@ -90,6 +155,26 @@ function App() {
 
     return filtered;
   }, [results, filterCategory, searchQuery]);
+
+  // Memoized filtered questions per category
+  const filteredByCategory = useMemo(() => {
+    const filtered: Record<string, QuestionItem[]> = {};
+    Object.entries(groupedResults).forEach(([catId, questions]) => {
+      const filteredQuestions = questions.filter((q) => {
+        if (filterCategory !== "all" && q.category !== filterCategory) {
+          return false;
+        }
+        if (searchQuery.trim()) {
+          return q.text.toLowerCase().includes(searchQuery.toLowerCase());
+        }
+        return true;
+      });
+      if (filteredQuestions.length > 0) {
+        filtered[catId] = filteredQuestions;
+      }
+    });
+    return filtered;
+  }, [groupedResults, filterCategory, searchQuery]);
 
   const onPromptChange = (id: string, value: string) => {
     setPromptOverrides((prev) => ({ ...prev, [id]: value }));
@@ -131,7 +216,7 @@ function App() {
     setTotalTime(null);
     // Initialize question generation progress
     setQuestionGenProgress({
-      currentCategory: "",
+      activeCategories: [],
       completedCategories: [],
       totalCategories: 6,
     });
@@ -168,27 +253,53 @@ function App() {
           category: '',
           percentage: 0,
         });
+        // Initialize question generation progress when starting
+        setQuestionGenProgress({
+          activeCategories: data.categories || [],
+          completedCategories: [],
+          totalCategories: data.categories?.length || 6,
+        });
       } else if (data.type === 'progress') {
         setProgress({
           current: data.current,
           total: data.total,
-          category: data.category,
+          category: data.category || (data.activeCategories && data.activeCategories.length > 0 ? data.activeCategories.join(', ') : ''),
           percentage: data.percentage,
           elapsed: data.elapsed,
         });
-        // Update question generation progress
-        if (data.category) {
+        // Update question generation progress - support multiple concurrent categories
+        if (data.activeCategories && Array.isArray(data.activeCategories)) {
           setQuestionGenProgress((prev) => {
             if (!prev) {
               return {
-                currentCategory: data.category,
+                activeCategories: data.activeCategories,
                 completedCategories: [],
                 totalCategories: 6,
               };
             }
+            // Update active categories list for concurrent processing
             return {
               ...prev,
-              currentCategory: data.category,
+              activeCategories: data.activeCategories,
+            };
+          });
+        } else if (data.category) {
+          // Fallback: single category mode
+          setQuestionGenProgress((prev) => {
+            if (!prev) {
+              return {
+                activeCategories: [data.category],
+                completedCategories: [],
+                totalCategories: 6,
+              };
+            }
+            // Add category to active list if not already there
+            const active = prev.activeCategories.includes(data.category)
+              ? prev.activeCategories
+              : [...prev.activeCategories, data.category];
+            return {
+              ...prev,
+              activeCategories: active,
             };
           });
         }
@@ -210,7 +321,7 @@ function App() {
         setQuestionGenProgress((prev) => {
           if (!prev) {
             return {
-              currentCategory: "",
+              activeCategories: [],
               completedCategories: [data.category],
               totalCategories: 6,
             };
@@ -219,10 +330,12 @@ function App() {
           if (!completed.includes(data.category)) {
             completed.push(data.category);
           }
+          // Remove from active categories when completed
+          const active = prev.activeCategories.filter(cat => cat !== data.category);
           return {
             ...prev,
             completedCategories: completed,
-            currentCategory: "",
+            activeCategories: active,
           };
         });
       } else if (data.type === 'complete') {
@@ -231,7 +344,14 @@ function App() {
         setTotalTime(data.total_time || null);
         setLoading(false);
         setProgress(null);
-        // Keep questionGenProgress to show final state
+        // Clear active categories when complete
+        setQuestionGenProgress((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            activeCategories: [], // Clear active categories when all done
+          };
+        });
         if (wsRef.current) {
           wsRef.current.close();
           wsRef.current = null;
@@ -288,27 +408,31 @@ function App() {
       </div>
 
       {/* S1-S6 Category Progress Bar */}
-      {questionGenProgress && (loading || questionGenProgress.completedCategories.length > 0) && (
+      {questionGenProgress && loading && (
         <div className="question-gen-progress">
           <div className="qg-progress-title">问题生成进度 (S1-S6)</div>
           <div className="qg-categories-bar">
             {["S1", "S2", "S3", "S4", "S5", "S6"].map((cat) => {
               const isCompleted = questionGenProgress.completedCategories.includes(cat);
-              const isCurrent = questionGenProgress.currentCategory === cat;
+              const isActive = questionGenProgress.activeCategories.includes(cat);
               return (
                 <div
                   key={cat}
-                  className={`qg-category-item ${isCompleted ? "completed" : ""} ${isCurrent ? "active" : ""}`}
-                  title={isCompleted ? `${cat} 已完成` : isCurrent ? `正在生成 ${cat}` : `${cat} 等待中`}
+                  className={`qg-category-item ${isCompleted ? "completed" : ""} ${isActive ? "active" : ""}`}
+                  title={isCompleted ? `${cat} 已完成` : isActive ? `正在生成 ${cat}` : `${cat} 等待中`}
                 >
-                  {isCompleted ? "✓" : isCurrent ? "⟳" : cat}
+                  {isCompleted ? "✓" : isActive ? "⟳" : cat}
                 </div>
               );
             })}
           </div>
-          {questionGenProgress.currentCategory && (
+          {questionGenProgress.activeCategories.length > 0 ? (
             <div className="qg-current-status">
-              正在生成 {questionGenProgress.currentCategory} 类别问题...
+              正在生成 {questionGenProgress.activeCategories.join('、')} 类别问题...
+            </div>
+          ) : (
+            <div className="qg-current-status">
+              准备生成问题...
             </div>
           )}
         </div>
@@ -397,8 +521,8 @@ function App() {
         <div className="error-message">错误：{error}</div>
       )}
 
-      {/* Results Section with Search and Filter */}
-      {results.length > 0 && (
+      {/* Results Section with Search and Filter - Hidden in question generation module */}
+      {false && results.length > 0 && (
         <div className="results-section">
           <div className="results-header">
             <h2>生成结果 ({results.length} 个问题)</h2>
@@ -422,30 +546,36 @@ function App() {
                   </option>
                 ))}
               </select>
+              <label className="items-per-page-label">
+                每页显示：
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    // Reset all category pages when changing items per page
+                    setCategoryPages({});
+                  }}
+                  className="items-per-page-select"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                  <option value={500}>500</option>
+                </select>
+              </label>
               <button onClick={exportToFile} className="export-btn">
                 导出为文件
               </button>
             </div>
           </div>
 
-          {/* Grouped Results by Category */}
+          {/* Grouped Results by Category with Virtual Scrolling */}
           <div className="results-grouped">
-            {Object.entries(groupedResults).map(([catId, questions]) => {
+            {Object.entries(filteredByCategory).map(([catId, filtered]) => {
               const cat = categories.find((c) => c.id === catId);
-              const filtered = questions.filter((q) => {
-                if (filterCategory !== "all" && q.category !== filterCategory) {
-                  return false;
-                }
-                if (searchQuery.trim()) {
-                  return q.text.toLowerCase().includes(searchQuery.toLowerCase());
-                }
-                return true;
-              });
+              if (!cat || filtered.length === 0) return null;
 
-              if (filtered.length === 0) return null;
-
-              // Pagination: if > 10 questions, show pagination
-              const itemsPerPage = 10;
+              // Pagination: if > itemsPerPage questions, show pagination
               const needsPagination = filtered.length > itemsPerPage;
               const currentPage = categoryPages[catId] || 1;
               const totalPages = Math.ceil(filtered.length / itemsPerPage);
@@ -453,63 +583,107 @@ function App() {
               const endIdx = needsPagination ? startIdx + itemsPerPage : filtered.length;
               const paginatedQuestions = filtered.slice(startIdx, endIdx);
               
+              // Build reference map: reference -> index
+              const refMap = (() => {
+                const map = new Map<string, number>();
+                let refCounter = 1;
+                paginatedQuestions.forEach((q) => {
+                  if (q.reference && q.reference.trim() && !map.has(q.reference)) {
+                    map.set(q.reference, refCounter++);
+                  }
+                });
+                return map;
+              })();
+              
+              // Use virtual scrolling for large lists (>= 50 items)
+              const useVirtualScroll = paginatedQuestions.length >= 50;
+              const itemHeight = 60; // Estimated height per item
+              const listHeight = Math.min(600, paginatedQuestions.length * itemHeight); // Max 600px height
+              
               return (
                 <div key={catId} className="category-group">
                   <div className="category-header">
                     <h3>
-                      {catId} - {cat?.title || catId} ({filtered.length} 个)
+                      {catId} - {cat.title} ({filtered.length} 个)
                     </h3>
                   </div>
                   <div className="questions-list">
-                    {(() => {
-                      // Build reference map: reference -> index
-                      const refMap = new Map<string, number>();
-                      let refCounter = 1;
-                      paginatedQuestions.forEach((q) => {
-                        if (q.reference && q.reference.trim() && !refMap.has(q.reference)) {
-                          refMap.set(q.reference, refCounter++);
-                        }
-                      });
-                      
-                      return paginatedQuestions.map((q, idx) => {
+                    {useVirtualScroll ? (
+                      <List
+                        ref={(ref: any) => {
+                          listRefs.current[catId] = ref;
+                        }}
+                        height={listHeight}
+                        width="100%"
+                        itemCount={paginatedQuestions.length}
+                        itemSize={itemHeight}
+                        // @ts-ignore - react-window type definition issue
+                        children={({ index, style }: { index: number; style: React.CSSProperties }) => (
+                          <VirtualRow
+                            index={index}
+                            style={style}
+                            rowProps={{
+                              questions: paginatedQuestions,
+                              startIdx,
+                              refMap,
+                            }}
+                          />
+                        )}
+                      />
+                    ) : (
+                      // For smaller lists, render normally
+                      paginatedQuestions.map((q, idx) => {
                         const hasReference = q.reference && q.reference.trim();
-                        const refIndex = hasReference ? refMap.get(q.reference) : null;
+                        const refIndex = hasReference && q.reference ? refMap.get(q.reference) || null : null;
                         const globalIdx = startIdx + idx + 1;
                         
                         return (
-                          <div key={startIdx + idx} className="question-item">
-                            <span className="question-number">{globalIdx}.</span>
-                            <div className="question-content">
-                              <span className="question-text">
-                                {q.text}
-                                {refIndex && (
-                                  <sup className="reference-sup">{refIndex}</sup>
-                                )}
-                              </span>
-                            </div>
-                          </div>
+                          <QuestionItemComponent
+                            key={startIdx + idx}
+                            question={q}
+                            index={globalIdx}
+                            refIndex={refIndex}
+                          />
                         );
-                      });
-                    })()}
+                      })
+                    )}
                     {/* Reference notes at the bottom */}
                     {(() => {
-                      const refMap = new Map<string, number>();
-                      let refCounter = 1;
-                      paginatedQuestions.forEach((q) => {
-                        if (q.reference && q.reference.trim() && !refMap.has(q.reference)) {
-                          refMap.set(q.reference, refCounter++);
-                        }
-                      });
-                      
                       const refEntries = Array.from(refMap.entries()).sort((a, b) => a[1] - b[1]);
                       if (refEntries.length > 0) {
+                        // Helper function to format reference for display
+                        const formatReference = (ref: string): string => {
+                          if (!ref) return '';
+                          
+                          // Handle multiple references separated by ';'
+                          const refs = ref.split(';').map(r => r.trim()).filter(r => r);
+                          if (refs.length === 0) return '';
+                          
+                          const formattedRefs = refs.map(r => {
+                            // Check if reference is in format "<source_file>|<heading>"
+                            const parts = r.split('|');
+                            if (parts.length >= 2) {
+                              // Return the heading part (everything after the first |)
+                              return parts.slice(1).join('|').trim() || parts[0].trim();
+                            }
+                            // For old format (just numbers or simple text), return as is
+                            return r.trim();
+                          });
+                          
+                          // Join multiple references with '; '
+                          return formattedRefs.join('; ');
+                        };
+                        
                         return (
                           <div className="reference-notes">
-                            {refEntries.map(([ref, idx]) => (
+                            {refEntries.map(([ref, idx]) => {
+                              const displayText = formatReference(ref);
+                              return (
                               <div key={idx} className="reference-note">
-                                <sup>{idx}</sup> {ref}
+                                  <sup>{idx}</sup> <span className="reference-text">{displayText || ref}</span>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         );
                       }
@@ -520,7 +694,13 @@ function App() {
                   {needsPagination && (
                     <div className="pagination">
                       <button
-                        onClick={() => setCategoryPage(catId, currentPage - 1)}
+                        onClick={() => {
+                          setCategoryPage(catId, currentPage - 1);
+                          // Scroll to top of list when changing page
+                          if (listRefs.current[catId]) {
+                            listRefs.current[catId]?.scrollToItem(0);
+                          }
+                        }}
                         disabled={currentPage === 1}
                         className="page-btn"
                       >
@@ -529,8 +709,27 @@ function App() {
                       <span className="page-info">
                         第 {currentPage} / {totalPages} 页
                       </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={totalPages}
+                        value={currentPage}
+                        onChange={(e) => {
+                          const page = Math.max(1, Math.min(totalPages, Number(e.target.value)));
+                          setCategoryPage(catId, page);
+                          if (listRefs.current[catId]) {
+                            listRefs.current[catId]?.scrollToItem(0);
+                          }
+                        }}
+                        className="page-input"
+                      />
                       <button
-                        onClick={() => setCategoryPage(catId, currentPage + 1)}
+                        onClick={() => {
+                          setCategoryPage(catId, currentPage + 1);
+                          if (listRefs.current[catId]) {
+                            listRefs.current[catId]?.scrollToItem(0);
+                          }
+                        }}
                         disabled={currentPage === totalPages}
                         className="page-btn"
                       >

@@ -43,5 +43,7 @@ app.include_router(ragflow_router)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual run helper
+    # For development, use uvicorn directly
+    # For production, use: gunicorn -c gunicorn_config.py app:app
     uvicorn.run("app:app", host="0.0.0.0", port=8180, reload=True)
 

@@ -545,12 +545,22 @@ button:disabled {
 .reference-note {
   margin-top: 4px;
   line-height: 1.5;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .reference-note sup {
   color: #9ca3af;
   font-size: 0.9em;
-  margin-right: 4px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.reference-note .reference-text {
+  color: #374151;
+  font-weight: 500;
+  word-break: break-word;
 }
 
 /* Timing Summary */
@@ -688,6 +698,18 @@ button:disabled {
   border-radius: 6px;
   color: #991b1b;
   font-size: 14px;
+}
+
+/* Success Message */
+.success-message {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #d1fae5;
+  border: 1px solid #a7f3d0;
+  border-radius: 6px;
+  color: #065f46;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 /* Index Page Styles */
@@ -2972,6 +2994,13 @@ button:disabled {
   grid-template-columns: 1fr 1fr;
   gap: 24px;
   margin-bottom: 24px;
+  align-items: stretch;
+}
+
+.retrieval-form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .retrieval-form h3 {
@@ -2979,6 +3008,21 @@ button:disabled {
   font-weight: 600;
   color: #1f2937;
   margin: 0 0 16px 0;
+}
+
+.retrieval-form .form-group {
+  margin-bottom: 24px;
+}
+
+/* 为右侧卡片添加占位空间，使其与左侧卡片高度一致 */
+.retrieval-form:last-child .form-group:only-of-type {
+  margin-bottom: 24px;
+}
+
+/* 确保按钮在底部对齐 */
+.retrieval-form .btn-retrieval-action {
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 /* 格式转换模块：根据内容自适应 */
