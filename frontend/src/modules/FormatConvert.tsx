@@ -476,34 +476,84 @@ function FormatConvert() {
                 {csvFullData
                   .slice(1)
                   .slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage)
-                  .map((row, idx) => (
-                    <tr key={(currentPage - 1) * rowsPerPage + idx}>
-                      {row.map((cell, cellIdx) => {
-                        // Check if this is the question column (index 0) and contains multiple choice format
-                        const isQuestionColumn = cellIdx === 0;
-                        const hasMultipleChoice = isQuestionColumn && cell.includes('\n') && /[A-D]\):/.test(cell);
-                        
-                        return (
-                          <td 
-                            key={cellIdx}
-                            className={hasMultipleChoice ? "csv-cell-multichoice" : ""}
-                          >
-                            {hasMultipleChoice ? (
-                              <div className="multichoice-content">
-                                {cell.split('\n').map((line, lineIdx) => (
-                                  <div key={lineIdx} className={lineIdx === 0 ? "multichoice-question" : "multichoice-option"}>
-                                    {line}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              cell
-                            )}
-                          </td>
-                        );
-                      })}
-                </tr>
-              ))}
+                  .map((row, idx) => {
+                    // Find reference and theme column indices
+                    const headerRow = csvFullData[0];
+                    const referenceColIdx = headerRow.findIndex(h => h.toLowerCase() === 'reference');
+                    const themeColIdx = headerRow.findIndex(h => h.toLowerCase() === 'theme');
+                    
+                    // Helper function to format chapter reference
+                    const formatChapterReference = (cell: string): string => {
+                      if (!cell) return '';
+                      
+                      // Format reference: if it's in format "<source_file>|<heading>", extract heading
+                      // If it's already "章节号.章节名" format, use as is
+                      const parts = cell.split('|');
+                      if (parts.length >= 2) {
+                        // Extract heading part (everything after first |)
+                        return parts.slice(1).join('|').trim() || parts[0].trim();
+                      } else {
+                        // Already in "章节号.章节名" format or just a number
+                        return cell.trim();
+                      }
+                    };
+                    
+                    // Helper function to format multiple references
+                    const formatMultipleReferences = (cell: string): string => {
+                      if (!cell) return '';
+                      
+                      if (cell.includes(';')) {
+                        return cell.split(';')
+                          .map(ref => {
+                            const formatted = formatChapterReference(ref.trim());
+                            return formatted;
+                          })
+                          .filter(ref => ref)
+                          .join('; ');
+                      } else {
+                        return formatChapterReference(cell);
+                      }
+                    };
+                    
+                    return (
+                      <tr key={(currentPage - 1) * rowsPerPage + idx}>
+                        {row.map((cell, cellIdx) => {
+                          // Check if this is the question column (index 0) and contains multiple choice format
+                          const isQuestionColumn = cellIdx === 0;
+                          const hasMultipleChoice = isQuestionColumn && cell.includes('\n') && /[A-D]\):/.test(cell);
+                          
+                          // Format reference and theme columns to show "章节号.章节名"
+                          const isReferenceColumn = cellIdx === referenceColIdx;
+                          const isThemeColumn = cellIdx === themeColIdx;
+                          let displayCell = cell;
+                          
+                          if ((isReferenceColumn || isThemeColumn) && cell) {
+                            // Both reference and theme should display chapter names
+                            displayCell = formatMultipleReferences(cell);
+                          }
+                          
+                          return (
+                            <td 
+                              key={cellIdx}
+                              className={hasMultipleChoice ? "csv-cell-multichoice" : ""}
+                            >
+                              {hasMultipleChoice ? (
+                                <div className="multichoice-content">
+                                  {cell.split('\n').map((line, lineIdx) => (
+                                    <div key={lineIdx} className={lineIdx === 0 ? "multichoice-question" : "multichoice-option"}>
+                                      {line}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                displayCell
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
             </tbody>
           </table>
           </div>

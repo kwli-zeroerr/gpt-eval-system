@@ -60,9 +60,37 @@ async def check_csv_exists(log_id: str):
 
 @router.delete("/api/format/logs/{log_id}")
 async def delete_log(log_id: str):
-    """Delete log files (JSON, TXT, CSV) for a given log ID."""
-    logs = list_log_files()
-    log_file = next((log for log in logs if log["request_id"].startswith(log_id)), None)
+    """Delete log files (JSON, TXT, CSV) for a given log ID.
+    
+    支持从 JSON 文件（data/frontend/）或 TXT 文件（data/backend/）删除。
+    会删除所有具有相同 request_id 的相关文件。
+    """
+    from config.paths import DATA_BACKEND_DIR, DATA_FRONTEND_DIR
+    from pathlib import Path
+    import re
+    
+    # 首先尝试从 backend 目录的 TXT 文件查找（优先）
+    log_file = None
+    backend_dir = DATA_BACKEND_DIR
+    if backend_dir.exists():
+        for txt_file in backend_dir.glob("questions_*.txt"):
+            try:
+                # 检查文件名是否包含 log_id
+                if log_id in txt_file.stem:
+                    # 读取文件内容获取 request_id
+                    with open(txt_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        match = re.search(r"请求ID:\s*([a-f0-9\-]+)", content, re.IGNORECASE)
+                        if match and match.group(1).startswith(log_id):
+                            log_file = {"path": str(txt_file), "request_id": match.group(1)}
+                            break
+            except Exception:
+                continue
+    
+    # 如果没找到，从 frontend 目录的 JSON 文件查找
+    if not log_file:
+        logs = list_log_files()
+        log_file = next((log for log in logs if log["request_id"].startswith(log_id)), None)
 
     if not log_file:
         raise HTTPException(status_code=404, detail="Log file not found")

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 import os
-from config.paths import DATA_FRONTEND_DIR, DATA_EXPORT_DIR, DATA_RETRIEVAL_DIR, DATA_EVALUATION_DIR
+from config.paths import DATA_FRONTEND_DIR, DATA_EXPORT_DIR, DATA_RETRIEVAL_DIR, DATA_EVALUATION_DIR, DATA_BACKEND_DIR
 from services.chapter_matcher import ChapterMatcher
 
 # 增加 CSV 字段大小限制（默认 131072 字节，增加到 10MB）
@@ -57,10 +57,10 @@ def extract_theme_from_reference(reference: str) -> str:
 def extract_chapter_from_reference(reference: str) -> str:
     """Extract chapter information from reference.
     
-    Currently returns the reference as-is. In the future, this could parse
-    the document structure to extract actual chapter numbers like "1.1 关于本手册".
+    Reference format: "<source_file>|<heading>" where heading is the full chapter name
+    (e.g., "1. 产品描述" or "13.2 配件").
     
-    For now, returns the filename or a placeholder.
+    Returns the full chapter name (heading) if available, otherwise extracts chapter number.
     """
     if not reference:
         return ""
@@ -73,14 +73,21 @@ def extract_chapter_from_reference(reference: str) -> str:
     chapters = []
     for ref in refs:
         dataset_part, sep, chapter_part = ref.partition("|")
-        target = (chapter_part or dataset_part or ref).strip()
-
-        # 优先从 chapter_part 中解析章节号，如 "13.2 配件" -> "13.2"
-        chapter = ChapterMatcher.extract_chapter_info(target)
-        if not chapter:
-            # 兼容旧格式："file.pdf:0" 等
-            filename = target.split(":")[0]
-            chapter = ChapterMatcher.extract_chapter_info(filename) or filename
+        
+        if chapter_part:
+            # 如果有 chapter_part（即 heading），直接使用完整的章节名
+            # heading 格式如 "1. 产品描述" 或 "13.2 配件"，这是完整的章节信息
+            chapter = chapter_part.strip()
+        else:
+            # 如果没有 chapter_part，说明是旧格式或没有章节信息
+            target = (dataset_part or ref).strip()
+            
+            # 尝试从 target 中提取章节信息
+            chapter = ChapterMatcher.extract_chapter_info(target)
+            if not chapter:
+                # 兼容旧格式："file.pdf:0" 等
+                filename = target.split(":")[0]
+                chapter = ChapterMatcher.extract_chapter_info(filename) or filename
 
         chapters.append(chapter)
 
@@ -134,16 +141,11 @@ def convert_log_to_csv(log_file_path: str, output_path: Optional[str] = None) ->
             
             # Extract information
             question_type = CATEGORY_TYPES.get(category, category)
-            # 优先从 reference 提取 theme，如果 reference 为空则从 question 提取
-            theme = extract_theme_from_reference(raw_ref) if raw_ref else ""
-            # reference 应该以 theme 为主，从 reference 中提取章节信息
-            # 如果 theme 存在，reference 应该只包含章节信息；如果 theme 不存在，reference 保持原样
-            if theme:
-                # 如果 theme 存在，reference 应该只包含章节部分
-                chapter_ref = extract_chapter_from_reference(raw_ref)
-            else:
-                # 如果 theme 不存在，reference 保持原样（可能包含完整路径）
-                chapter_ref = raw_ref
+            # 从 reference 提取章节信息（heading）作为 theme
+            # theme 列显示章节名字（如 "1. 产品描述"）
+            theme = extract_chapter_from_reference(raw_ref) if raw_ref else ""
+            # reference 列也显示章节信息（与 theme 相同，保持一致性）
+            chapter_ref = extract_chapter_from_reference(raw_ref) if raw_ref else raw_ref
             
             # answer and answer_chapter are empty for now (to be filled later by retrieval module)
             writer.writerow([question, "", "", chapter_ref, question_type, theme])
@@ -211,11 +213,14 @@ def list_log_files(log_dir: str = None) -> List[Dict[str, str]]:
 def delete_log_files(log_file_path: str) -> Dict[str, bool]:
     """Delete log files (JSON, TXT, CSV) for a given log file.
     
+    支持从 JSON 文件（data/frontend/）或 TXT 文件（data/backend/）开始删除。
+    会删除所有具有相同 request_id 的相关文件。
+    
     Args:
-        log_file_path: Path to JSON log file
+        log_file_path: Path to JSON log file (data/frontend/) or TXT log file (data/backend/)
     
     Returns:
-        Dict with deletion status: {json_deleted, txt_deleted, csv_deleted}
+        Dict with deletion status: {json_deleted, txt_deleted, csv_deleted, ...}
     """
     log_path = Path(log_file_path)
     if not log_path.exists():
@@ -226,43 +231,145 @@ def delete_log_files(log_file_path: str) -> Dict[str, bool]:
         "txt_deleted": False, 
         "csv_deleted": False,
         "retrieval_files_deleted": 0,
-        "evaluation_files_deleted": 0
+        "evaluation_files_deleted": 0,
+        "txt_files_deleted": 0
     }
     
-    # Read request_id from JSON file
-    try:
-        with open(log_path, "r", encoding="utf-8") as f:
-            log_data = json.load(f)
-        request_id = log_data.get("request_id", "")
-    except Exception:
-        request_id = ""
+    request_id = ""
     
-    # Delete JSON file
-    try:
-        if log_path.exists():
-            log_path.unlink()
-            result["json_deleted"] = True
-    except Exception:
-        pass
+    # 判断文件类型：JSON 或 TXT
+    if log_path.suffix.lower() == ".txt":
+        # 从 TXT 文件读取 request_id
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                # 从内容中提取 request_id（格式：请求ID: <request_id>）
+                import re
+                match = re.search(r"请求ID:\s*([a-f0-9\-]+)", content, re.IGNORECASE)
+                if match:
+                    request_id = match.group(1).strip()
+                else:
+                    # 尝试从文件名提取（格式：questions_YYYYMMDD_HHMMSS_<request_id_prefix>.txt）
+                    # request_id 前缀是文件名的一部分
+                    stem_parts = log_path.stem.split("_")
+                    if len(stem_parts) >= 3:
+                        # 文件名格式：questions_20251225_100151_464ad8b5
+                        # 最后一部分是 request_id 的前 8 位
+                        request_id_prefix = stem_parts[-1]
+                        # 尝试在 backend 目录中查找完整的 request_id
+                        for txt_file in DATA_BACKEND_DIR.glob(f"questions_*_{request_id_prefix}.txt"):
+                            try:
+                                with open(txt_file, "r", encoding="utf-8") as f2:
+                                    content2 = f2.read()
+                                    match2 = re.search(r"请求ID:\s*([a-f0-9\-]+)", content2, re.IGNORECASE)
+                                    if match2:
+                                        request_id = match2.group(1).strip()
+                                        break
+                            except Exception:
+                                continue
+        except Exception as e:
+            logger.warning(f"从 TXT 文件读取 request_id 失败: {e}")
+    else:
+        # 从 JSON 文件读取 request_id
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                log_data = json.load(f)
+            request_id = log_data.get("request_id", "")
+        except Exception as e:
+            logger.warning(f"从 JSON 文件读取 request_id 失败: {e}")
     
-    # Delete corresponding TXT file from data/backend/
+    # 根据文件类型删除对应的文件
+    if log_path.suffix.lower() == ".txt":
+        # 如果输入是 TXT 文件，先删除它
+        try:
+            if log_path.exists():
+                log_path.unlink()
+                result["txt_deleted"] = True
+                result["txt_files_deleted"] = 1
+                logger.info(f"已删除 TXT 日志文件: {log_path}")
+        except Exception as e:
+            logger.warning(f"删除 TXT 文件失败: {e}")
+    else:
+        # 如果输入是 JSON 文件，先删除它
+        try:
+            if log_path.exists():
+                log_path.unlink()
+                result["json_deleted"] = True
+                logger.info(f"已删除 JSON 日志文件: {log_path}")
+        except Exception as e:
+            logger.warning(f"删除 JSON 文件失败: {e}")
+    
+    # 删除所有具有相同 request_id 的相关文件
     if request_id:
         try:
-            backend_dir = Path("data/backend")
+            backend_dir = DATA_BACKEND_DIR
             if backend_dir.exists():
-                # Find TXT file with matching request_id
+                deleted_txt_files = []
+                request_id_prefix = request_id[:8]
+                # Find all TXT files with matching request_id (not just the first one)
                 for txt_file in backend_dir.glob("questions_*.txt"):
-                    try:
-                        with open(txt_file, "r", encoding="utf-8") as f:
-                            content = f.read()
-                            if request_id[:8] in content or request_id in content:
-                                txt_file.unlink()
-                                result["txt_deleted"] = True
-                                break
-                    except Exception:
+                    # 跳过已经删除的文件（如果输入就是 TXT 文件）
+                    if txt_file == log_path and log_path.suffix.lower() == ".txt":
                         continue
-        except Exception:
-            pass
+                    try:
+                        # 方法1: 通过文件名匹配（文件名包含 request_id 前缀）
+                        if request_id_prefix in txt_file.stem or request_id in txt_file.stem:
+                            txt_file.unlink()
+                            deleted_txt_files.append(str(txt_file))
+                            logger.info(f"已删除 TXT 日志文件: {txt_file}")
+                        else:
+                            # 方法2: 通过文件内容匹配
+                            with open(txt_file, "r", encoding="utf-8") as f:
+                                content = f.read()
+                                if request_id_prefix in content or request_id in content:
+                                    txt_file.unlink()
+                                    deleted_txt_files.append(str(txt_file))
+                                    logger.info(f"已删除 TXT 日志文件（通过内容匹配）: {txt_file}")
+                    except Exception as e:
+                        logger.warning(f"删除 TXT 文件 {txt_file} 时出错: {e}")
+                        continue
+                
+                if deleted_txt_files:
+                    result["txt_deleted"] = True
+                    result["txt_files_deleted"] = result.get("txt_files_deleted", 0) + len(deleted_txt_files)
+        except Exception as e:
+            logger.warning(f"删除 TXT 日志文件失败: {e}")
+    
+    # 删除所有具有相同 request_id 的 JSON 文件（data/frontend/）
+    if request_id:
+        try:
+            frontend_dir = DATA_FRONTEND_DIR
+            if frontend_dir.exists():
+                deleted_json_files = []
+                request_id_prefix = request_id[:8] if len(request_id) >= 8 else request_id
+                # 查找所有匹配的 JSON 文件
+                for json_file in frontend_dir.glob("questions_*.json"):
+                    # 跳过已经删除的文件（如果输入就是 JSON 文件）
+                    if json_file == log_path and log_path.suffix.lower() == ".json":
+                        continue
+                    try:
+                        # 方法1: 通过文件名匹配
+                        if request_id_prefix in json_file.stem or request_id in json_file.stem:
+                            json_file.unlink()
+                            deleted_json_files.append(str(json_file))
+                            logger.info(f"已删除 JSON 日志文件: {json_file}")
+                        else:
+                            # 方法2: 通过文件内容匹配
+                            with open(json_file, "r", encoding="utf-8") as f:
+                                json_data = json.load(f)
+                                file_request_id = json_data.get("request_id", "")
+                                if request_id_prefix in file_request_id or request_id == file_request_id:
+                                    json_file.unlink()
+                                    deleted_json_files.append(str(json_file))
+                                    logger.info(f"已删除 JSON 日志文件（通过内容匹配）: {json_file}")
+                    except Exception as e:
+                        logger.warning(f"删除 JSON 文件 {json_file} 时出错: {e}")
+                        continue
+                
+                if deleted_json_files:
+                    result["json_deleted"] = True
+        except Exception as e:
+            logger.warning(f"删除 JSON 日志文件失败: {e}")
     
     # Delete corresponding CSV files from multiple directories
     # 1. Delete CSV from data/export/ (format conversion output)

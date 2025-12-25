@@ -49,6 +49,9 @@ class MinIOClient:
             secret_key=secret_key,
             secure=secure,
         )
+        
+        # Cache for index.json files to avoid repeated reads
+        self._index_json_cache: dict[str, dict] = {}
 
     def list_files(self, prefix: Optional[str] = None, max_items: int = 100) -> List[str]:
         """List files in knowledge bucket via MinIO API.
@@ -108,6 +111,81 @@ class MinIOClient:
         except S3Error as e:
             print(f"Error reading MinIO file {object_name} via API: {e}")
             return None
+
+    def _get_index_json_path(self, segment_path: str) -> Optional[str]:
+        """从 segment 文件路径推断对应的 index.json 路径。
+        
+        例如：
+        - 输入: "6e20ee5f-68c6-4990-8cee-398cb13bf23f/ocr_result/077c1bfc/segments/segment_001.mmd"
+        - 输出: "6e20ee5f-68c6-4990-8cee-398cb13bf23f/ocr_result/077c1bfc/segments/index.json"
+        """
+        if not segment_path.endswith(".mmd") or "/segments/" not in segment_path:
+            return None
+        
+        # 替换文件名部分为 index.json
+        parts = segment_path.split("/")
+        segments_idx = None
+        for i, part in enumerate(parts):
+            if part == "segments":
+                segments_idx = i
+                break
+        
+        if segments_idx is None:
+            return None
+        
+        # 构建 index.json 路径
+        index_parts = parts[:segments_idx + 1] + ["index.json"]
+        return "/".join(index_parts)
+
+    def _get_segment_metadata_from_index(
+        self, 
+        index_json_path: str, 
+        segment_id: str
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """从 index.json 中获取指定 segment 的章节信息和源文件名。
+        
+        返回: (heading, chapter, source_file)
+        - heading: segment 的实际章节（优先使用，这是最准确的章节标识）
+        - chapter: 对应的大章（如果存在）
+        - source_file: 源文件名（从 index.json 的 source_file 字段获取）
+        
+        如果找不到对应的 segment，返回 (None, None, None)
+        """
+        # 先检查缓存
+        if index_json_path in self._index_json_cache:
+            data = self._index_json_cache[index_json_path]
+        else:
+            content = self.get_file_content(index_json_path)
+            if not content:
+                return None, None, None
+            
+            try:
+                data = json.loads(content)
+                # 缓存解析后的数据
+                self._index_json_cache[index_json_path] = data
+            except (json.JSONDecodeError, TypeError):
+                return None, None, None
+        
+        source_file = data.get("source_file", "")
+        segments = data.get("segments", [])
+        
+        if not isinstance(segments, list):
+            return None, None, None
+        
+        # 查找匹配的 segment
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            
+            seg_id = seg.get("id", "")
+            if seg_id == segment_id:
+                # heading 是 segment 的实际章节（最准确）
+                heading = seg.get("heading", "").strip() if seg.get("heading") else None
+                # chapter 是对应的大章
+                chapter = seg.get("chapter", "").strip() if seg.get("chapter") else None
+                return heading, chapter, source_file
+        
+        return None, None, None
 
     def _extract_segments_from_ocr_result(
         self, content: str, object_name: str
@@ -237,31 +315,50 @@ class MinIOClient:
 
             # .mmd 文件是纯文本格式，直接使用内容作为 segment
             if obj_name.endswith(".mmd"):
-                # 从路径中提取 PDF 名称和章节信息
-                # 路径格式：{dataset_id}/ocr_result/{subdir}/page_results/page_XXX.mmd
-                parts = obj_name.split("/")
-                pdf_name = ""
-                for part in parts:
-                    if part.endswith(".pdf"):
-                        pdf_name = part
-                        break
+                # 从路径中提取 segment ID（如 segment_001）
+                segment_id = Path(obj_name).stem  # 例如 "segment_001"
                 
-                # 如果没有找到 PDF 名称，尝试从路径推断
-                if not pdf_name:
-                    # 查找包含 PDF 名称的部分
-                    for part in reversed(parts):
-                        if ".pdf" in part:
-                            pdf_name = part.split(".")[0] + ".pdf"
+                # 获取对应的 index.json 路径
+                index_json_path = self._get_index_json_path(obj_name)
+                
+                heading = None  # segment 的实际章节
+                chapter = None  # 对应的大章
+                source_file = None
+                
+                if index_json_path:
+                    # 从 index.json 中获取章节信息和源文件名
+                    heading, chapter, source_file = self._get_segment_metadata_from_index(
+                        index_json_path, segment_id
+                    )
+                
+                # 如果从 index.json 获取失败，回退到从路径提取 PDF 名称
+                if not source_file:
+                    parts = obj_name.split("/")
+                    for part in parts:
+                        if part.endswith(".pdf"):
+                            source_file = part
                             break
+                    
+                    # 如果没有找到 PDF 名称，尝试从路径推断
+                    if not source_file:
+                        for part in reversed(parts):
+                            if ".pdf" in part:
+                                source_file = part.split(".")[0] + ".pdf"
+                                break
                 
-                # 提取章节信息（从文件名或内容）
-                chapter_info = ChapterMatcher.extract_chapter_info(content[:500]) or ""
-                
-                # 构建 reference
-                if chapter_info:
-                    ref = f"{pdf_name}|{chapter_info}" if pdf_name else chapter_info
+                # 构建 reference：使用 heading 作为章节信息（最准确）
+                # reference 格式: "<source_file>|<heading>"
+                if heading and source_file:
+                    ref = f"{source_file}|{heading}"
+                elif heading:
+                    # 如果没有 source_file，只使用 heading
+                    ref = heading
+                elif source_file:
+                    # 如果没有 heading，只使用 source_file
+                    ref = source_file
                 else:
-                    ref = pdf_name if pdf_name else obj_name
+                    # 最后的回退：使用对象名称
+                    ref = obj_name
                 
                 # 将整个 .mmd 文件内容作为一个 chunk
                 if content.strip():
