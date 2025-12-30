@@ -108,6 +108,14 @@ def convert_log_to_csv(log_file_path: str, output_path: Optional[str] = None) ->
         Path to generated CSV file
     """
     log_path = Path(log_file_path)
+    
+    # If input is original file, check for edited version
+    if not log_path.name.endswith("_edited.json"):
+        edited_path = log_path.parent / f"{log_path.stem}_edited.json"
+        if edited_path.exists():
+            log_path = edited_path  # Prefer edited version
+            logger.info(f"Using edited version for conversion: {edited_path}")
+    
     if not log_path.exists():
         raise FileNotFoundError(f"Log file not found: {log_file_path}")
     
@@ -185,27 +193,75 @@ def list_log_files(log_dir: str = None) -> List[Dict[str, str]]:
     """List all available log files from data/frontend/ directory.
     
     Returns:
-        List of dicts with file info: {path, request_id, generated_at, total_questions}
+        List of dicts with file info: {path, request_id, generated_at, total_questions, is_edited, original_path}
     """
     log_path = Path(log_dir) if log_dir is not None else DATA_FRONTEND_DIR
     if not log_path.exists():
         return []
     
-    log_files = []
+    log_files_map = {}  # request_id -> log_info
+    
+    # First pass: collect all files
     for json_file in log_path.glob("questions_*.json"):
         try:
             with open(json_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            log_files.append({
-                "path": str(json_file),
-                "request_id": data.get("request_id", ""),
-                "generated_at": data.get("generated_at", ""),
-                "total_questions": data.get("total_questions", 0),
-            })
+            request_id = data.get("request_id", "")
+            if not request_id:
+                continue
+            
+            is_edited = json_file.name.endswith("_edited.json")
+            
+            # If this request_id is already in map, prefer edited version
+            if request_id in log_files_map:
+                existing = log_files_map[request_id]
+                # If current file is edited and existing is not, replace
+                if is_edited and not existing.get("is_edited", False):
+                    log_files_map[request_id] = {
+                        "path": str(json_file),
+                        "request_id": request_id,
+                        "generated_at": data.get("generated_at", ""),
+                        "total_questions": data.get("total_questions", 0),
+                        "is_edited": True,
+                        "original_path": existing.get("path"),  # Keep original path
+                    }
+                # If both are edited or both are original, keep the newer one
+                elif is_edited == existing.get("is_edited", False):
+                    existing_time = existing.get("generated_at", "")
+                    current_time = data.get("generated_at", "")
+                    if current_time > existing_time:
+                        log_files_map[request_id] = {
+                            "path": str(json_file),
+                            "request_id": request_id,
+                            "generated_at": data.get("generated_at", ""),
+                            "total_questions": data.get("total_questions", 0),
+                            "is_edited": is_edited,
+                            "original_path": existing.get("original_path") if is_edited else None,
+                        }
+            else:
+                # First time seeing this request_id
+                log_files_map[request_id] = {
+                    "path": str(json_file),
+                    "request_id": request_id,
+                    "generated_at": data.get("generated_at", ""),
+                    "total_questions": data.get("total_questions", 0),
+                    "is_edited": is_edited,
+                    "original_path": None,
+                }
         except Exception:
             continue
     
-    # Sort by generated_at (newest first)
+    # Second pass: fill in original_path for edited files
+    for request_id, log_info in log_files_map.items():
+        if log_info.get("is_edited") and not log_info.get("original_path"):
+            # Find original file
+            original_stem = log_info["path"].replace("_edited.json", ".json")
+            original_path = Path(original_stem)
+            if original_path.exists():
+                log_info["original_path"] = str(original_path)
+    
+    # Convert to list and sort
+    log_files = list(log_files_map.values())
     log_files.sort(key=lambda x: x.get("generated_at", ""), reverse=True)
     return log_files
 

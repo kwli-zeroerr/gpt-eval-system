@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import QuestionGen from "./modules/QuestionGen";
+import QuestionEdit from "./modules/QuestionEdit";
 import FormatConvert from "./modules/FormatConvert";
 import Retrieval from "./modules/Retrieval";
 import Evaluation from "./modules/Evaluation";
@@ -41,10 +42,17 @@ interface ModuleInfo {
 
 const MODULES: ModuleInfo[] = [
   { id: "question_gen", name: "问题生成", status: "completed", component: QuestionGen },
+  { id: "question_edit", name: "问题编辑", status: "completed", component: QuestionEdit },
   { id: "format_convert", name: "格式转换", status: "completed", component: FormatConvert },
   { id: "retrieval", name: "检索", status: "pending", component: Retrieval },
   { id: "evaluation", name: "评测", status: "pending", component: Evaluation },
 ];
+
+// 定义管道模块（排除问题编辑，因为它是独立模块，不在管道流程中）
+const PIPELINE_MODULES = MODULES.filter(m => 
+  m.id !== "question_edit" && 
+  ["question_gen", "format_convert", "retrieval", "evaluation"].includes(m.id)
+);
 
 function Index() {
   const [activeModule, setActiveModule] = useState<string>("overview");
@@ -72,8 +80,9 @@ function Index() {
   // Show overview page when no specific module is selected, or show module details
   const showOverview = activeModule === "overview";
 
-  // 已完成的模块数量（0 ~ MODULES.length）
-  const completedSteps = Math.min(Math.max(pipelineStep, 0), MODULES.length);
+  // 已完成的模块数量（0 ~ PIPELINE_MODULES.length）
+  // 注意：使用 PIPELINE_MODULES 而不是 MODULES，因为 question_edit 不在管道流程中
+  const completedSteps = Math.min(Math.max(pipelineStep, 0), PIPELINE_MODULES.length);
 
   // Cleanup WebSocket on unmount
   useEffect(() => {
@@ -370,7 +379,7 @@ function Index() {
         setPipelineProgress(finalProgress);
         
         // 设置最终步骤为所有模块完成
-        setPipelineStep(MODULES.length);
+        setPipelineStep(PIPELINE_MODULES.length);
         
         // 清除进度数据
         setRetrievalProgress(null);
@@ -483,22 +492,22 @@ function Index() {
                     strokeWidth="8"
                     strokeLinecap="round"
                     strokeDasharray={`${2 * Math.PI * 45}`}
-                    strokeDashoffset={`${2 * Math.PI * 45 * (1 - (completedSteps || 0) / MODULES.length)}`}
+                    strokeDashoffset={`${2 * Math.PI * 45 * (1 - (completedSteps || 0) / PIPELINE_MODULES.length)}`}
                     transform="rotate(-90 50 50)"
                   />
                 </svg>
                 <div className="circular-progress-text">
                   <div className="progress-ratio">
-                    {completedSteps} of {MODULES.length}
+                    {completedSteps} of {PIPELINE_MODULES.length}
                   </div>
                 </div>
               </div>
               <div className="circular-progress-info">
                 <div className="current-step-name">
-                  {pipelineStep < MODULES.length ? MODULES[pipelineStep]?.name : "全部完成"}
+                  {pipelineStep < PIPELINE_MODULES.length ? PIPELINE_MODULES[pipelineStep]?.name : "全部完成"}
                 </div>
                 <div className="current-step-desc">
-                  {pipelineStep < MODULES.length 
+                  {pipelineStep < PIPELINE_MODULES.length 
                     ? (pipelineRunning ? "正在处理中..." : "等待运行")
                     : "所有模块已完成"}
                 </div>
@@ -508,7 +517,7 @@ function Index() {
             {/* Segmented Progress Bar (Example 7 style) */}
             <div className="segmented-progress-container">
               <div className="segmented-progress-bar">
-                {MODULES.map((module, idx) => (
+                {PIPELINE_MODULES.map((module, idx) => (
                   <div
                     key={module.id}
                     className={`progress-segment ${idx <= pipelineStep ? "completed" : ""} ${idx === pipelineStep ? "active" : ""}`}
@@ -516,7 +525,7 @@ function Index() {
                     <div className="segment-content">
                       {module.name}
                     </div>
-                    {idx < MODULES.length - 1 && (
+                    {idx < PIPELINE_MODULES.length - 1 && (
                       <div className={`segment-arrow ${idx < pipelineStep ? "completed" : ""}`}></div>
                     )}
                   </div>
@@ -570,7 +579,7 @@ function Index() {
               <div className="pipeline-progress">
                 <div className="progress-title">运行进度</div>
                 <div className="progress-modules">
-                  {MODULES.map((module, idx) => {
+                  {PIPELINE_MODULES.map((module, idx) => {
                     const moduleKey = module.id;
                     // 优先使用 pipelineStep 来判断状态，确保与 segmented-progress-container 同步
                     // 如果 pipelineStep 已经超过当前模块，说明已完成
