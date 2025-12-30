@@ -46,6 +46,16 @@ interface EvaluationResult {
     ragas_quality_score?: number;
     ragas_relevancy_score?: number;
     ragas_satisfaction_score?: number;
+    // Ragas Faithfulness 中间变量（新增）
+    ragas_faithfulness_statements_avg?: number;
+    ragas_faithfulness_statements_total?: number;
+    ragas_faithfulness_verdicts_faithful_ratio?: number;
+    ragas_faithfulness_verdicts_faithful_ratio_percentage?: number;
+    ragas_faithfulness_statements_distribution?: {
+      faithful_count: number;
+      unfaithful_count: number;
+      total_count: number;
+    };
     // Ragas 状态
     ragas_available?: boolean;
     ragas_init_error?: string;
@@ -77,6 +87,12 @@ interface EvaluationResult {
     p50_total_time?: number;
     p95_total_time?: number;
     concurrent_10_avg_time?: number;
+    // 时间统计
+    load_time?: number;
+    ragas_init_time?: number;
+    evaluation_time?: number;
+    save_time?: number;
+    avg_time_per_question?: number;
     // 泛化性指标
     generalization_score?: number;
     generalization_score_percentage?: number;
@@ -123,7 +139,15 @@ function Evaluation() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<EvaluationResult | null>(null);
-  const [progress, setProgress] = useState({ current: 0, total: 0, percentage: 0 });
+  const [progress, setProgress] = useState({ current: 0, total: 0, percentage: 0, elapsed_time: 0, estimated_remaining: 0 });
+  const [wsRef, setWsRef] = useState<WebSocket | null>(null);
+  const [ragasMetricsConfig, setRagasMetricsConfig] = useState({
+    disable_faithfulness: false,
+    disable_factual_correctness: false,
+    disable_context_relevance: false,
+    disable_answer_relevancy: false,
+  });
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [resultFiles, setResultFiles] = useState<EvaluationResultFile[]>([]);
   const [selectedResultFile, setSelectedResultFile] = useState<string>("");
   const [viewMode, setViewMode] = useState<"new" | "existing">("new");
@@ -159,8 +183,13 @@ function Evaluation() {
     
     return () => {
       window.removeEventListener('pipeline-complete-evaluation', handlePipelineComplete as EventListener);
+      // 清理WebSocket连接
+      if (wsRef) {
+        wsRef.close();
+        setWsRef(null);
+      }
     };
-  }, []);
+  }, [wsRef]);
 
   const fetchCsvFiles = async () => {
     try {
@@ -218,45 +247,127 @@ function Evaluation() {
       return;
     }
 
+    // 如果已有WebSocket连接，先关闭
+    if (wsRef) {
+      wsRef.close();
+      setWsRef(null);
+    }
+
     setLoading(true);
     setError(null);
     setResult(null);
-    setProgress({ current: 0, total: 0, percentage: 0 });
+    setProgress({ current: 0, total: 0, percentage: 0, elapsed_time: 0, estimated_remaining: 0 });
 
     try {
-      const response = await fetch("/api/evaluation/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
+      // 使用WebSocket连接
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/evaluation/progress`);
+      setWsRef(ws);
+
+      ws.onopen = () => {
+        // 发送评测请求
+        ws.send(JSON.stringify({
           csv_path: selectedCsv,
-          mode: evaluationMode
-        }),
-      });
+          mode: evaluationMode,
+          ragas_metrics_config: ragasMetricsConfig
+        }));
+      };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "评测失败");
-      }
+      ws.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
 
-      const data = await response.json();
-      setResult(data);
-      // 运行完成后加载明细（最新文件）
-      if (data.summary_json_path) {
-        await loadDetail(data.summary_json_path);
-      } else {
-        setPerQuestionItems([]);
-      }
-      await fetchResultFiles();
+          if (data.type === "start") {
+            // 评测开始 - 保持当前progress状态，等待第一个progress更新
+            // 不重置progress，这样进度条可以立即显示
+          } else if (data.type === "progress") {
+            // 进度更新
+            setProgress({
+              current: data.current || 0,
+              total: data.total || 0,
+              percentage: data.percentage || 0,
+              elapsed_time: data.elapsed_time || 0,
+              estimated_remaining: data.estimated_remaining || 0
+            });
+          } else if (data.type === "complete") {
+            // 评测完成
+            const resultData = data.results;
+            setResult(resultData);
+            
+            // 加载明细
+            if (resultData.summary_json_path) {
+              await loadDetail(resultData.summary_json_path);
+            } else {
+              setPerQuestionItems([]);
+            }
+            await fetchResultFiles();
+            
+            setLoading(false);
+            ws.close();
+            setWsRef(null);
+          } else if (data.type === "error") {
+            setError("评测失败: " + (data.message || "未知错误"));
+            setLoading(false);
+            ws.close();
+            setWsRef(null);
+          }
+        } catch (e) {
+          console.error("解析WebSocket消息失败:", e);
+          setError("接收评测结果失败: " + (e instanceof Error ? e.message : String(e)));
+          setLoading(false);
+          ws.close();
+          setWsRef(null);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket错误:", error);
+        setError("连接错误，请重试");
+        setLoading(false);
+        ws.close();
+        setWsRef(null);
+      };
+
+      ws.onclose = () => {
+        setWsRef(null);
+      };
     } catch (e) {
-      setError("评测失败: " + (e instanceof Error ? e.message : String(e)));
-    } finally {
+      setError("启动评测失败: " + (e instanceof Error ? e.message : String(e)));
       setLoading(false);
+      if (wsRef) {
+        wsRef.close();
+        setWsRef(null);
+      }
     }
   };
 
-  const downloadResults = () => {
-    if (result?.results_csv_path) {
-      window.open(result.results_csv_path, "_blank");
+  const downloadResults = async () => {
+    if (!result?.results_csv_path) {
+      setError("没有可下载的 CSV 文件");
+      return;
+    }
+    
+    try {
+      const response = await fetch(
+        `/api/evaluation/download/csv?csv_path=${encodeURIComponent(result.results_csv_path)}`
+      );
+      
+      if (!response.ok) {
+        throw new Error("下载失败");
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.results_csv_path.split("/").pop() || "evaluation_results.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("下载 CSV 失败", err);
+      setError("下载 CSV 失败: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
@@ -285,9 +396,33 @@ function Evaluation() {
     }
   };
 
-  const downloadSummary = () => {
-    if (result?.summary_json_path) {
-      window.open(result.summary_json_path, "_blank");
+  const downloadSummary = async () => {
+    if (!result?.summary_json_path) {
+      setError("没有可下载的 JSON 文件");
+      return;
+    }
+    
+    try {
+      const response = await fetch(
+        `/api/evaluation/download/json?json_path=${encodeURIComponent(result.summary_json_path)}`
+      );
+      
+      if (!response.ok) {
+        throw new Error("下载失败");
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.summary_json_path.split("/").pop() || "evaluation_summary.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("下载 JSON 失败", err);
+      setError("下载 JSON 失败: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
@@ -295,6 +430,22 @@ function Evaluation() {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
     return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  };
+
+  const formatTime = (seconds: number | undefined) => {
+    if (!seconds && seconds !== 0) return "N/A";
+    if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
+    if (seconds < 60) return `${seconds.toFixed(2)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = (seconds % 60).toFixed(0);
+    return `${minutes}分${secs}秒`;
+  };
+
+  const formatTimeShort = (seconds: number | undefined) => {
+    if (!seconds && seconds !== 0) return "N/A";
+    if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    return `${(seconds / 60).toFixed(1)}分钟`;
   };
 
   const formatScore = (v: any, toPercent = true) => {
@@ -461,20 +612,36 @@ function Evaluation() {
         </div>
       </div>
 
-      {loading && progress.total > 0 && (
+      {loading && (
         <div className="card progress-card">
           <div className="progress-header">
             <span className="progress-label">评测进度</span>
-            <span className="progress-percentage">{progress.percentage}%</span>
+            {progress.total > 0 ? (
+              <span className="progress-percentage">{progress.percentage}%</span>
+            ) : (
+              <span className="progress-percentage">初始化中...</span>
+            )}
           </div>
           <div className="progress-bar-modern">
             <div
               className="progress-fill-modern"
-              style={{ width: `${progress.percentage}%` }}
+              style={{ width: progress.total > 0 ? `${progress.percentage}%` : '0%' }}
             />
           </div>
           <p className="progress-text">
-            {progress.current} / {progress.total} 个问题
+            {progress.total > 0 ? (
+              <>
+                {progress.current} / {progress.total} 个问题
+                {progress.elapsed_time > 0 && (
+                  <> · 已用时间: {formatTime(progress.elapsed_time)}</>
+                )}
+                {progress.estimated_remaining > 0 && (
+                  <> · 预计剩余: {formatTime(progress.estimated_remaining)}</>
+                )}
+              </>
+            ) : (
+              <>正在连接服务器，准备开始评测...</>
+            )}
           </p>
         </div>
       )}
@@ -509,9 +676,28 @@ function Evaluation() {
               <h3>核心指标</h3>
               <p className="section-subtitle">
                 {result.mode === "hybrid" ? "混合评测" : result.mode === "ragas" ? "Ragas AI 评测" : "章节匹配评测"} · 
-                共 {result.summary.total_questions} 个问题 · 
-                耗时 {result.total_time.toFixed(2)} 秒
+                共 {result.summary.total_questions} 个问题
               </p>
+              {result.total_time > 0 && result.summary && (
+                <div style={{ fontSize: "13px", opacity: 0.8, marginTop: "8px", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                  <span>总耗时: <strong>{formatTime(result.total_time)}</strong></span>
+                  {result.summary.load_time !== undefined && (
+                    <span>加载: {formatTimeShort(result.summary.load_time)}</span>
+                  )}
+                  {result.summary.ragas_init_time !== undefined && result.summary.ragas_init_time > 0 && (
+                    <span>Ragas初始化: {formatTimeShort(result.summary.ragas_init_time)}</span>
+                  )}
+                  {result.summary.evaluation_time !== undefined && (
+                    <span>评测: {formatTimeShort(result.summary.evaluation_time)}</span>
+                  )}
+                  {result.summary.save_time !== undefined && (
+                    <span>保存: {formatTimeShort(result.summary.save_time)}</span>
+                  )}
+                  {result.summary.avg_time_per_question !== undefined && (
+                    <span>平均: {formatTimeShort(result.summary.avg_time_per_question)}/条</span>
+                  )}
+                </div>
+              )}
             </div>
             
             <div className="dashboard-metrics">
@@ -565,6 +751,24 @@ function Evaluation() {
                 </div>
               )}
               
+              {/* 忠实度 */}
+              {result.summary.ragas_faithfulness_score_percentage !== undefined && (
+                <div className="metric-card apple-style">
+                  <div className="metric-label">
+                    忠实度（Faithfulness）
+                    <MetricTooltip text="评估答案是否忠实于提供的上下文。答案应该基于上下文信息，不包含上下文之外的信息或编造的内容。" />
+                  </div>
+                  <div className="metric-value">
+                    {result.summary.ragas_faithfulness_score_percentage?.toFixed(2) || "0.00"}%
+                  </div>
+                  {result.summary.ragas_faithfulness_statements_avg !== undefined && (
+                    <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
+                      平均 {result.summary.ragas_faithfulness_statements_avg.toFixed(1)} statements/答案
+                    </div>
+                  )}
+                </div>
+              )}
+              
               {/* 章节匹配准确率 */}
               {(result.summary.chapter_match_accuracy_percentage !== undefined || result.summary.accuracy_percentage !== undefined) && (
                 <div className="metric-card apple-style">
@@ -612,6 +816,67 @@ function Evaluation() {
             )}
           </div>
           
+          {/* 忠实度详细分析 - 中间变量统计 */}
+          {result.summary.ragas_faithfulness_statements_avg !== undefined && (
+            <div className="dashboard-section" style={{ marginTop: "32px" }}>
+              <div className="section-header">
+                <h3>忠实度详细分析</h3>
+                <p className="section-subtitle">基于Statements和Verdicts的中间变量分析</p>
+              </div>
+              <div className="dashboard-metrics">
+                {result.summary.ragas_faithfulness_statements_avg !== undefined && (
+                  <div className="metric-card apple-style" style={{ border: "2px solid #5856D6", background: "linear-gradient(135deg, #f5f4ff 0%, #ffffff 100%)" }}>
+                    <div className="metric-label">
+                      平均Statements数量
+                      <MetricTooltip text="每个答案平均提取的statements数量。Statements是从答案中分解出的独立陈述。" />
+                    </div>
+                    <div className="metric-value" style={{ color: "#5856D6" }}>
+                      {result.summary.ragas_faithfulness_statements_avg.toFixed(2)}
+                    </div>
+                    {result.summary.ragas_faithfulness_statements_total !== undefined && (
+                      <div style={{ fontSize: "12px", opacity: 0.7, marginTop: "4px", fontWeight: 400 }}>
+                        总计: {result.summary.ragas_faithfulness_statements_total} 条
+                      </div>
+                    )}
+                  </div>
+                )}
+                {result.summary.ragas_faithfulness_verdicts_faithful_ratio_percentage !== undefined && (
+                  <div className="metric-card apple-style" style={{ border: "2px solid #5856D6", background: "linear-gradient(135deg, #f5f4ff 0%, #ffffff 100%)" }}>
+                    <div className="metric-label">
+                      忠实Statements比例
+                      <MetricTooltip text="所有statements中被判断为忠实（可以在上下文中直接推断）的比例。比例越高，说明答案越忠实于上下文。" />
+                    </div>
+                    <div className="metric-value" style={{ color: "#5856D6" }}>
+                      {result.summary.ragas_faithfulness_verdicts_faithful_ratio_percentage.toFixed(2)}%
+                    </div>
+                  </div>
+                )}
+                {result.summary.ragas_faithfulness_statements_distribution && (
+                  <>
+                    <div className="metric-card apple-style">
+                      <div className="metric-label">
+                        忠实Statements数量
+                        <MetricTooltip text="被判断为忠实（verdict=1）的statements总数" />
+                      </div>
+                      <div className="metric-value" style={{ color: "#34C759" }}>
+                        {result.summary.ragas_faithfulness_statements_distribution.faithful_count}
+                      </div>
+                    </div>
+                    <div className="metric-card apple-style">
+                      <div className="metric-label">
+                        非忠实Statements数量
+                        <MetricTooltip text="被判断为非忠实（verdict=0）的statements总数，这些statements可能包含上下文之外的信息或编造内容" />
+                      </div>
+                      <div className="metric-value" style={{ color: "#FF3B30" }}>
+                        {result.summary.ragas_faithfulness_statements_distribution.unfaithful_count}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 检索优化指标 */}
           {(result.summary.recall_at_3 !== undefined || result.summary.recall_at_5 !== undefined || result.summary.recall_at_10 !== undefined) && (
             <div className="dashboard-section" style={{ marginTop: "32px" }}>
@@ -968,14 +1233,17 @@ function Evaluation() {
                   <table className="csv-table">
                     <thead>
                       <tr>
-                        <th>题目</th>
-                        <th>答案</th>
-                        <th>类型</th>
-                        <th>章节匹配</th>
-                        <th>相关性</th>
-                        <th>答案质量</th>
-                        <th>忠实度</th>
-                        <th>混合得分</th>
+                        <th style={{ width: '300px', minWidth: '250px' }}>问题</th>
+                        <th style={{ width: 'auto', minWidth: '200px' }}>答案</th>
+                        <th style={{ width: '80px', minWidth: '60px' }}>类型</th>
+                        <th style={{ width: '100px', minWidth: '80px' }}>章节匹配</th>
+                        <th style={{ width: '100px', minWidth: '80px' }}>相关性</th>
+                        <th style={{ width: '100px', minWidth: '80px' }}>答案质量</th>
+                        <th style={{ width: '120px', minWidth: '100px' }}>忠实度</th>
+                        <th style={{ width: '100px', minWidth: '80px' }}>混合得分</th>
+                        <th style={{ width: '90px', minWidth: '70px' }}>召回率@3</th>
+                        <th style={{ width: '90px', minWidth: '70px' }}>召回率@5</th>
+                        <th style={{ width: '100px', minWidth: '80px' }}>召回率@10</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -987,6 +1255,40 @@ function Evaluation() {
                           const quality = item.ragas_quality_score;
                           const faithfulness = item.ragas_faithfulness_score;
                           const hybrid = item.hybrid_score;
+                          const recallAt3 = item.recall_at_3;
+                          const recallAt5 = item.recall_at_5;
+                          const recallAt10 = item.recall_at_10;
+                          // 提取faithfulness中间变量
+                          const faithfulnessTotalCount = item.ragas_faithfulness_total_count;
+                          const faithfulnessFaithfulCount = item.ragas_faithfulness_faithful_count;
+                          const faithfulnessStatements = item.ragas_faithfulness_statements ? (() => {
+                            try {
+                              return JSON.parse(item.ragas_faithfulness_statements);
+                            } catch {
+                              return null;
+                            }
+                          })() : null;
+                          const faithfulnessVerdicts = item.ragas_faithfulness_verdicts ? (() => {
+                            try {
+                              return JSON.parse(item.ragas_faithfulness_verdicts);
+                            } catch {
+                              return null;
+                            }
+                          })() : null;
+                          
+                          // 格式化faithfulness显示（包含statements数量）
+                          const formatFaithfulness = () => {
+                            if (faithfulness === undefined || faithfulness === null) return "-";
+                            const scoreStr = formatScore(faithfulness);
+                            if (faithfulnessTotalCount !== undefined && faithfulnessTotalCount !== null) {
+                              const faithfulStr = faithfulnessFaithfulCount !== undefined && faithfulnessFaithfulCount !== null 
+                                ? `${faithfulnessFaithfulCount}/${faithfulnessTotalCount}`
+                                : `${faithfulnessTotalCount}`;
+                              return `${scoreStr} (${faithfulStr})`;
+                            }
+                            return scoreStr;
+                          };
+                          
                           return (
                             <tr key={`${itemPage}-${idx}`}>
                               <td className="cell-question">{item.question}</td>
@@ -995,8 +1297,18 @@ function Evaluation() {
                               <td>{chapterAcc !== undefined && chapterAcc !== null ? formatScore(chapterAcc) : "-"}</td>
                               <td>{formatScore(relevancy)}</td>
                               <td>{formatScore(quality)}</td>
-                              <td>{formatScore(faithfulness)}</td>
+                              <td>
+                                {formatFaithfulness()}
+                                {faithfulnessStatements && faithfulnessVerdicts && (
+                                  <div style={{ fontSize: "11px", opacity: 0.7, marginTop: "2px" }}>
+                                    {faithfulnessStatements.length} statements
+                                  </div>
+                                )}
+                              </td>
                               <td>{formatScore(hybrid)}</td>
+                              <td>{recallAt3 !== undefined && recallAt3 !== null ? (recallAt3 === 1 ? "✓" : "✗") : "-"}</td>
+                              <td>{recallAt5 !== undefined && recallAt5 !== null ? (recallAt5 === 1 ? "✓" : "✗") : "-"}</td>
+                              <td>{recallAt10 !== undefined && recallAt10 !== null ? (recallAt10 === 1 ? "✓" : "✗") : "-"}</td>
                             </tr>
                           );
                         })}

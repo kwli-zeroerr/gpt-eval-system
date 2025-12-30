@@ -1589,19 +1589,23 @@ button:disabled {
 }
 
 .cell-question {
-  width: 250px;
-  min-width: 200px;
-  max-width: 300px;
+  width: 300px;
+  min-width: 250px;
+  max-width: 400px;
   font-weight: 500;
   line-height: 1.5;
   word-wrap: break-word;
+  white-space: normal;
+  /* 确保问题列始终可见 */
+  display: table-cell !important;
 }
 
 .cell-answer {
   width: auto;
-  min-width: 400px;
-  max-width: 800px;
+  min-width: 300px;
+  max-width: 600px;
   word-wrap: break-word;
+  white-space: normal;
 }
 
 .answer-badge {
@@ -2274,10 +2278,16 @@ button:disabled {
 .logs-table,
 .csv-table {
   width: 100%;
-  min-width: 1200px;
+  min-width: 1400px;
   border-collapse: collapse;
   margin-top: 16px;
-  table-layout: auto;
+  table-layout: fixed;
+  /* 确保所有列都可见 */
+}
+
+/* 评测模块表格特殊处理 */
+.evaluation-module .csv-table {
+  min-width: 1600px;
 }
 
 .logs-table th,
@@ -2978,8 +2988,33 @@ button:disabled {
 
 .csv-table-container {
   overflow-x: auto;
+  overflow-y: visible;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
+  width: 100%;
+  max-width: 100%;
+  /* 确保横向滚动条可见 */
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f1f5f9;
+}
+
+.csv-table-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.csv-table-container::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.csv-table-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.csv-table-container::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 /* 检索模块：移除内部滚动，让内容自然展开，由外层页面滚动 */
@@ -3199,4 +3234,397 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+/* Question Edit Module Styles */
+.question-edit-module {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.question-edit-module h2 {
+  margin: 0 0 8px 0;
+  color: #1f2937;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.question-edit-module > p {
+  margin: 0 0 24px 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.logs-selection {
+  margin-bottom: 32px;
+  padding: 20px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+}
+
+.logs-selection h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.logs-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.log-item {
+  padding: 16px;
+  background: #f9fafb;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.log-item:hover {
+  border-color: #007AFF;
+  background: #f0f9ff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 122, 255, 0.1);
+}
+
+.log-item.selected {
+  border-color: #007AFF;
+  background: #eff6ff;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+}
+
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.log-id {
+  font-family: monospace;
+  font-size: 13px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.edited-badge {
+  padding: 2px 8px;
+  background: #10b981;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.log-info {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.questions-editor {
+  padding: 24px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.editor-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.editor-stats span {
+  padding: 4px 12px;
+  background: #f3f4f6;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.unsaved-indicator {
+  padding: 4px 12px;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.filters {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-group label {
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.filter-group select,
+.filter-group input {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.filter-group input {
+  min-width: 200px;
+}
+
+.filter-group button {
+  padding: 8px 16px;
+  background: #007AFF;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.filter-group button:hover {
+  background: #0051D5;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 122, 255, 0.3);
+}
+
+.filter-group .delete-btn {
+  background: #ef4444;
+}
+
+.filter-group .delete-btn:hover {
+  background: #dc2626;
+}
+
+.questions-list {
+  margin-top: 20px;
+}
+
+.list-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.list-header input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.question-item-editable {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: #fff;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.question-item-editable:hover {
+  border-color: #007AFF;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.1);
+}
+
+.question-item-editable input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.question-number {
+  font-weight: 600;
+  color: #6b7280;
+  min-width: 24px;
+}
+
+.question-display {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.question-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.question-category {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.question-text {
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.6;
+}
+
+.question-reference {
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.question-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.question-actions button {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.question-actions button:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.question-actions .delete-btn {
+  background: #fee2e2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.question-actions .delete-btn:hover {
+  background: #fecaca;
+  border-color: #f87171;
+}
+
+.edit-form {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.edit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.edit-row label {
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
+  min-width: 60px;
+}
+
+.edit-row select,
+.edit-row input[type="text"],
+.edit-row textarea {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.edit-row textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.edit-actions button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.edit-actions button:first-child {
+  background: #007AFF;
+  color: #fff;
+}
+
+.edit-actions button:first-child:hover {
+  background: #0051D5;
+}
+
+.edit-actions button:last-child {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.edit-actions button:last-child:hover {
+  background: #e5e7eb;
 }
