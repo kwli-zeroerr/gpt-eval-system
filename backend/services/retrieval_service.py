@@ -491,10 +491,17 @@ async def run_retrieval(
         Dict with results: {output_csv_path, total_questions, completed, failed, total_time}
     """
     start_time = time.time()
+    logger.info("=" * 80)
+    logger.info(f"开始检索任务: {csv_path}")
+    logger.info(f"配置: max_workers={max_workers}, delay={delay_between_requests}s")
+    logger.info("=" * 80)
     
     # 加载测试用例
+    load_start = time.time()
     test_cases = load_test_cases_from_csv(csv_path)
     total = len(test_cases)
+    load_time = time.time() - load_start
+    logger.info(f"加载测试用例完成: {total} 条，耗时 {load_time:.2f} 秒")
     
     if total == 0:
         raise ValueError("CSV 文件中没有测试用例")
@@ -740,11 +747,11 @@ async def run_retrieval(
                             
                             # 检查是否是"未找到"的标准回复
                             if "not found" in answer_text.lower() or "找不到" in answer_text or "无法找到" in answer_text:
-                                logger.warning(f"[{idx}/{total}] ⚠ AI 返回未找到答案: {answer_text[:80]}")
+                                logger.warning(f"[{idx}/{total}] ⚠️ AI 返回未找到答案: {answer_text[:80]}")
                             else:
-                                logger.info(f"[{idx}/{total}] ✓ {test_case.question[:40]}... -> {answer_text[:60]}...")
+                                logger.info(f"[{idx}/{total}] ✅ {test_case.question[:40]}... -> {answer_text[:60]}...")
                         else:
-                            logger.warning(f"[{idx}/{total}] ✗ Completion API 返回空答案（可能是 API 调用失败或 AI 无法生成答案）")
+                            logger.warning(f"[{idx}/{total}] ❌ Completion API 返回空答案（可能是 API 调用失败或 AI 无法生成答案）")
                             test_case.answer = ""
                             test_case.answer_chapter = ""
                     else:
@@ -794,12 +801,12 @@ async def run_retrieval(
                         chunks = data.get('chunks', []) if isinstance(data, dict) else []
                         
                         if answer_chapter:
-                            logger.info(f"[{idx}/{total}] ✓ {test_case.question[:40]}... -> {answer_chapter}")
+                            logger.info(f"[{idx}/{total}] ✅ {test_case.question[:40]}... -> {answer_chapter}")
                         else:
                             if len(chunks) == 0:
-                                logger.warning(f"[{idx}/{total}] ✗ 未找到答案：检索 API 未返回任何 chunk（可能是相似度阈值过高或知识库中没有相关内容）")
+                                logger.warning(f"[{idx}/{total}] ❌ 未找到答案：检索 API 未返回任何 chunk（可能是相似度阈值过高或知识库中没有相关内容）")
                             else:
-                                logger.warning(f"[{idx}/{total}] ✗ 未找到答案：检索 API 返回了 {len(chunks)} 个 chunk，但无法提取章节信息（可能是章节匹配失败）")
+                                logger.warning(f"[{idx}/{total}] ❌ 未找到答案：检索 API 返回了 {len(chunks)} 个 chunk，但无法提取章节信息（可能是章节匹配失败）")
             except Exception as api_error:
                 logger.error(f"[{idx}/{total}] 检索异常: {str(api_error)[:80]}", exc_info=True)
                 test_case.answer = ""
@@ -833,6 +840,7 @@ async def run_retrieval(
     MAX_PROCESSES = int(os.getenv('MAX_PROCESSES', max(4, multiprocessing.cpu_count() or 4)))
     effective_max_workers = min(max_workers, MAX_PROCESSES) if max_workers > 1 else 1
     
+    retrieval_start_time = time.time()
     if effective_max_workers > 1:
         logger.info(f"使用多进程并发模式检索，进程数: {effective_max_workers}")
         
@@ -890,14 +898,28 @@ async def run_retrieval(
                             )
                         except Exception as e:
                             logger.warning(f"Progress callback error: {e}")
+                    
+                    # 记录进度日志（每10%或每完成一条）
+                    with counter_lock:
+                        current_completed = completed
+                    if result_idx % max(1, total // 10) == 0 or result_idx == total:
+                        elapsed = time.time() - retrieval_start_time
+                        avg_time_per_item = elapsed / result_idx if result_idx > 0 else 0
+                        remaining = total - result_idx
+                        eta = avg_time_per_item * remaining if remaining > 0 else 0
+                        logger.info(f"检索进度: {result_idx}/{total} ({result_idx*100//total}%) | "
+                                  f"已用时: {elapsed:.1f}s | 平均: {avg_time_per_item:.2f}s/条 | "
+                                  f"预计剩余: {eta:.1f}s")
                 except Exception as e:
                     logger.error(f"任务 {idx} 执行异常: {str(e)}")
                     with counter_lock:
                         failed += 1
     else:
-        logger.debug("使用顺序模式检索")
+        logger.info("使用顺序模式检索")
         for idx, test_case in enumerate(test_cases, 1):
+            case_start = time.time()
             process_single_case(idx, test_case)
+            case_time = time.time() - case_start
             
             # 发送进度更新
             if progress_callback:
@@ -907,12 +929,28 @@ async def run_retrieval(
                     {"status": "processing", "current": idx, "total": total}
                 )
             
+            # 记录进度日志（每10%或每完成一条）
+            if idx % max(1, total // 10) == 0 or idx == total:
+                elapsed = time.time() - retrieval_start_time
+                avg_time_per_item = elapsed / idx if idx > 0 else 0
+                remaining = total - idx
+                eta = avg_time_per_item * remaining if remaining > 0 else 0
+                logger.info(f"检索进度: {idx}/{total} ({idx*100//total}%) | "
+                          f"已用时: {elapsed:.1f}s | 平均: {avg_time_per_item:.2f}s/条 | "
+                          f"预计剩余: {eta:.1f}s | 本条: {case_time:.2f}s")
+            
             # 延迟以避免限流
             if delay_between_requests > 0:
                 await asyncio.sleep(delay_between_requests)
     
+    retrieval_time = time.time() - retrieval_start_time
+    logger.info(f"检索处理完成: 耗时 {retrieval_time:.2f} 秒")
+    
     # 保存结果到 CSV
+    save_start = time.time()
     save_test_cases_to_csv(test_cases, str(output_csv_path))
+    save_time = time.time() - save_start
+    logger.info(f"保存结果完成: 耗时 {save_time:.2f} 秒")
     
     total_time = time.time() - start_time
     
@@ -952,9 +990,24 @@ async def run_retrieval(
         "completed": completed,
         "failed": failed,
         "total_time": total_time,
+        "load_time": load_time,
+        "retrieval_time": retrieval_time,
+        "save_time": save_time,
+        "avg_time_per_question": total_time / total if total > 0 else 0,
     }
     
-    logger.info(f"检索完成: {completed}/{total} 成功, {failed} 失败 ({total_time:.1f}s)")
+    logger.info("=" * 80)
+    logger.info(f"检索任务完成!")
+    logger.info(f"  总问题数: {total}")
+    logger.info(f"  成功: {completed} ({completed*100//total if total > 0 else 0}%)")
+    logger.info(f"  失败: {failed} ({failed*100//total if total > 0 else 0}%)")
+    logger.info(f"  时间统计:")
+    logger.info(f"    加载CSV: {load_time:.2f}s")
+    logger.info(f"    检索处理: {retrieval_time:.2f}s")
+    logger.info(f"    保存结果: {save_time:.2f}s")
+    logger.info(f"    总计: {total_time:.2f}s ({total_time/60:.1f}分钟)")
+    logger.info(f"    平均: {total_time/total:.2f}s/条" if total > 0 else "    平均: N/A")
+    logger.info("=" * 80)
     
     return result
 

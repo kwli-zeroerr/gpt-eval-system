@@ -18,10 +18,15 @@ router = APIRouter()
 @router.post("/api/retrieval/run")
 async def run_retrieval_api(request: Dict):
     """Run retrieval module on a given CSV."""
+    import time
+    api_start_time = time.time()
+    
     csv_path = request.get("csv_path")
     if not csv_path:
         raise HTTPException(status_code=400, detail="csv_path is required")
     try:
+        logger.info(f"[API] 检索请求开始: {csv_path}")
+        
         ragflow_api_url = os.getenv("RAGFLOW_API_URL", "")
         ragflow_api_key = os.getenv("RAGFLOW_API_KEY", "")
         datasets_json_path = os.getenv("RAGFLOW_DATASETS_JSON", None)
@@ -48,6 +53,10 @@ async def run_retrieval_api(request: Dict):
             max_workers=int(os.getenv("RAGFLOW_MAX_WORKERS", "1")),
             delay_between_requests=float(os.getenv("RAGFLOW_DELAY", "0.5")),
         )
+        
+        api_total_time = time.time() - api_start_time
+        logger.info(f"[API] 检索请求完成: 总耗时 {api_total_time:.2f} 秒")
+        result["api_total_time"] = api_total_time
 
         return result
     except HTTPException:

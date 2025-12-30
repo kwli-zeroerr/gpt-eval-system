@@ -23,9 +23,10 @@ keepalive = 5
 graceful_timeout = 30
 
 # Logging
-accesslog = '-'  # stdout
-errorlog = '-'   # stdout
-loglevel = 'info'
+# 禁用访问日志以减少日志噪音，专注于评测相关的业务日志
+accesslog = None  # 不记录访问日志（GET/POST请求），只显示业务日志
+errorlog = '-'    # 错误日志输出到stderr
+loglevel = 'info'  # 日志级别
 
 # Performance tuning
 max_requests = 10000  # Restart worker after this many requests
@@ -47,7 +48,7 @@ def on_starting(server):
 
 def when_ready(server):
     """Called just after the server is started."""
-    logging.info(f"✓ Gunicorn server ready on {bind}")
+    logging.info(f"✅ Gunicorn server ready on {bind}")
 
 def on_exit(server):
     """Called just before exiting Gunicorn."""

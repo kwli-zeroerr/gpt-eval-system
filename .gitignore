@@ -50,3 +50,10 @@ Thumbs.db
 frontend/dist/
 frontend/build/
 
+# Temporary scripts and documents in root directory
+/*.sh
+DAILY_PROGRESS_STAR.txt
+DAILY_PROGRESS_STAR.md
+DETAILED_METRICS_ANALYSIS.md
+SYSTEM_SUMMARY.md
+

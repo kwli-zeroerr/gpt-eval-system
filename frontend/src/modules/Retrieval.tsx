@@ -8,6 +8,11 @@ interface RetrievalResult {
   completed: number;
   failed: number;
   total_time: number;
+  load_time?: number;
+  retrieval_time?: number;
+  save_time?: number;
+  avg_time_per_question?: number;
+  api_total_time?: number;
 }
 
 interface RetrievalItem {
@@ -252,7 +257,17 @@ function Retrieval() {
 
   const formatTime = (seconds: number) => {
     if (seconds < 1) return `${(seconds * 1000).toFixed(0)} ms`;
-    return `${seconds.toFixed(2)} s`;
+    if (seconds < 60) return `${seconds.toFixed(2)} s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = (seconds % 60).toFixed(0);
+    return `${minutes}分${secs}秒`;
+  };
+
+  const formatTimeShort = (seconds: number | undefined) => {
+    if (!seconds && seconds !== 0) return "N/A";
+    if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    return `${(seconds / 60).toFixed(1)}分钟`;
   };
 
   return (
@@ -422,9 +437,30 @@ function Retrieval() {
                   <option value={100}>100 行</option>
                 </select>
               </label>
-              <span className="csv-total-rows">
-                共 {items.length} 条结果（成功: {result.completed}, 失败: {result.failed}, 耗时: {formatTime(result.total_time)}）
-              </span>
+              <div className="csv-total-rows" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                <span>
+                  共 {items.length} 条结果（成功: {result.completed}, 失败: {result.failed}）
+                </span>
+                {result.total_time > 0 && (
+                  <div style={{ fontSize: "12px", opacity: 0.7 }}>
+                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                      <span>总耗时: <strong>{formatTime(result.total_time)}</strong></span>
+                      {result.load_time !== undefined && (
+                        <span>加载: {formatTimeShort(result.load_time)}</span>
+                      )}
+                      {result.retrieval_time !== undefined && (
+                        <span>检索: {formatTimeShort(result.retrieval_time)}</span>
+                      )}
+                      {result.save_time !== undefined && (
+                        <span>保存: {formatTimeShort(result.save_time)}</span>
+                      )}
+                      {result.avg_time_per_question !== undefined && (
+                        <span>平均: {formatTimeShort(result.avg_time_per_question)}/条</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
               <button onClick={downloadResult} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
